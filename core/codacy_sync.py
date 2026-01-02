@@ -43,11 +43,11 @@ class CodacySync:
             "Accept": "application/json",
         }
 
-    def _fetch_paginated(
+    def _fetch_paginated_get(
         self, url: str, params: dict | None = None, max_items: int = 500
     ) -> list[dict]:
         """
-        Holt paginierte Daten von der API.
+        Holt paginierte Daten von der API (GET).
 
         Args:
             url: API Endpoint URL
@@ -73,7 +73,63 @@ class CodacySync:
                 response.raise_for_status()
                 data = response.json()
             except requests.RequestException as e:
-                logger.error(f"API-Fehler: {e}")
+                logger.error(f"API-Fehler (GET): {e}")
+                break
+            except ValueError as e:
+                logger.error(f"JSON-Fehler: {e}")
+                break
+
+            items = data.get("data", [])
+            if not items:
+                break
+
+            all_items.extend(items)
+
+            # Pagination
+            pagination = data.get("pagination", {})
+            cursor = pagination.get("cursor")
+            if not cursor or len(items) < params["limit"]:
+                break
+
+        return all_items[:max_items]
+
+    def _fetch_paginated_post(
+        self, url: str, body: dict | None = None, max_items: int = 500
+    ) -> list[dict]:
+        """
+        Holt paginierte Daten von der API (POST).
+
+        Args:
+            url: API Endpoint URL
+            body: Request Body
+            max_items: Maximale Anzahl Items
+
+        Returns:
+            Liste aller Items
+        """
+        if body is None:
+            body = {}
+
+        all_items = []
+        cursor = None
+
+        while len(all_items) < max_items:
+            params = {"limit": min(100, max_items - len(all_items))}
+            if cursor:
+                params["cursor"] = cursor
+
+            try:
+                response = requests.post(
+                    url,
+                    headers={**self._headers(), "Content-Type": "application/json"},
+                    params=params,
+                    json=body,
+                    timeout=30,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except requests.RequestException as e:
+                logger.error(f"API-Fehler (POST): {e}")
                 break
             except ValueError as e:
                 logger.error(f"JSON-Fehler: {e}")
@@ -108,15 +164,31 @@ class CodacySync:
         Returns:
             Liste der SRM Items
         """
-        url = f"{CODACY_API_BASE}/organizations/{provider}/{org}/srm/items"
-        params = {"repositories": repo}
-
+        # Codacy SRM API endpoint (POST mit search)
+        url = (
+            f"{CODACY_API_BASE}/analysis/organizations/{provider}/{org}"
+            f"/repositories/{repo}/srm/items/search"
+        )
+        body = {}
         if statuses:
-            params["statuses"] = ",".join(statuses)
+            body["statuses"] = statuses
 
-        return self._fetch_paginated(url, params)
+        items = self._fetch_paginated_post(url, body)
 
-    def fetch_quality_issues(self, provider: str, org: str, repo: str) -> list[dict]:
+        # Fallback: Security-Issues über issues/search mit Security-Filter
+        if not items:
+            logger.info("SRM-Endpoint leer, versuche Security-Issues...")
+            items = self.fetch_quality_issues(provider, org, repo, categories=["Security"])
+
+        return items
+
+    def fetch_quality_issues(
+        self,
+        provider: str,
+        org: str,
+        repo: str,
+        categories: list[str] | None = None,
+    ) -> list[dict]:
         """
         Holt Code Quality Issues von Codacy.
 
@@ -124,15 +196,20 @@ class CodacySync:
             provider: Git Provider (gh, gl, bb)
             org: Organisation/Owner
             repo: Repository Name
+            categories: Filter nach Kategorien (Security, ErrorProne, etc.)
 
         Returns:
             Liste der Quality Issues
         """
         url = (
             f"{CODACY_API_BASE}/analysis/organizations/{provider}/{org}"
-            f"/repositories/{repo}/issues"
+            f"/repositories/{repo}/issues/search"
         )
-        return self._fetch_paginated(url)
+        body = {}
+        if categories:
+            body["categories"] = categories
+
+        return self._fetch_paginated_post(url, body)
 
     def sync_project(self, db: DatabaseManager, project: Project) -> dict:
         """
