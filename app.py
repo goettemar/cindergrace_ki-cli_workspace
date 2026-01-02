@@ -252,19 +252,47 @@ class KIWorkspaceApp:
             gr.Markdown("# 🤖 KI-CLI Workspace")
             gr.Markdown("Issue-Management und KI-übergreifende Zusammenarbeit")
 
+            # Globale Projekt-Auswahl
             with gr.Row():
                 project_dropdown = gr.Dropdown(
                     choices=self.get_project_choices(),
                     label="Projekt",
                     value=None,
                     interactive=True,
+                    scale=3,
                 )
-                sync_btn = gr.Button("🔄 Sync von Codacy", variant="secondary")
-                sync_status = gr.Textbox(label="Sync Status", interactive=False, max_lines=2)
 
             with gr.Tabs():
-                # === Issues Tab ===
-                with gr.Tab("📋 Issues"):
+                # === Dashboard Tab ===
+                with gr.Tab("🏠 Dashboard"):
+                    gr.Markdown("### Willkommen im KI-CLI Workspace")
+                    gr.Markdown(
+                        "Dieses Tool dient der projektübergreifenden Issue-Verwaltung "
+                        "und KI-Zusammenarbeit."
+                    )
+
+                    with gr.Row():
+                        with gr.Column():
+                            gr.Markdown("### 📊 Statistiken")
+                            dashboard_stats = gr.Markdown()
+                            refresh_dashboard_btn = gr.Button("🔄 Aktualisieren")
+
+                        with gr.Column():
+                            gr.Markdown("### ℹ️ Projekt-Info")
+                            project_info = gr.Markdown("*Wähle ein Projekt aus*")
+
+                # === Issues Tab (Codacy) ===
+                with gr.Tab("📋 Issues (Codacy)"):
+                    # Sync-Bereich
+                    with gr.Row():
+                        sync_btn = gr.Button("🔄 Sync von Codacy", variant="primary", scale=1)
+                        sync_status = gr.Textbox(
+                            label="Status", interactive=False, scale=3, max_lines=2
+                        )
+
+                    gr.Markdown("---")
+
+                    # Filter
                     with gr.Row():
                         priority_filter = gr.Dropdown(
                             choices=["Alle", "Critical", "High", "Medium", "Low"],
@@ -288,6 +316,7 @@ class KIWorkspaceApp:
                         placeholder="SQL injection, semgrep, manager.py...",
                     )
 
+                    # Issues-Tabelle
                     issues_table = gr.Dataframe(
                         headers=["ID", "Pri", "Priorität", "Typ", "Titel", "Datei", "Tool", "FP"],
                         datatype=["number", "str", "str", "str", "str", "str", "str", "str"],
@@ -295,6 +324,7 @@ class KIWorkspaceApp:
                         interactive=False,
                     )
 
+                    # Details & Aktionen
                     with gr.Row():
                         with gr.Column(scale=2):
                             gr.Markdown("### Issue Details")
@@ -322,11 +352,6 @@ class KIWorkspaceApp:
                             )
                             fp_result = gr.Textbox(label="Ergebnis", interactive=False)
 
-                # === Statistiken Tab ===
-                with gr.Tab("📊 Statistiken"):
-                    stats_display = gr.Markdown(elem_classes=["stats-box"])
-                    refresh_stats_btn = gr.Button("🔄 Aktualisieren")
-
                 # === False Positives Tab ===
                 with gr.Tab("🚫 False Positives"):
                     gr.Markdown("### Alle False Positives")
@@ -337,15 +362,33 @@ class KIWorkspaceApp:
                         interactive=False,
                     )
 
-                # === Handoffs Tab ===
+                # === KI-Übergaben Tab ===
                 with gr.Tab("🤝 KI-Übergaben"):
                     gr.Markdown("### Session-Übergaben zwischen KI-CLIs")
                     gr.Markdown("*Kommt in Phase 2*")
+
+                # === Einstellungen Tab ===
+                with gr.Tab("⚙️ Einstellungen"):
+                    gr.Markdown("### Projekt-Einstellungen")
+                    gr.Markdown("*Kommt in Phase 2 - Codacy-Konfiguration, Token-Verwaltung*")
 
             # === Event Handlers ===
 
             def update_issues(*args):
                 return self.get_issues_table(*args)
+
+            def update_project_info(project_id):
+                if not project_id:
+                    return "*Wähle ein Projekt aus*"
+                project = self.db.get_project(project_id)
+                if not project:
+                    return "*Projekt nicht gefunden*"
+                return (
+                    f"**Name:** {project.name}\n\n"
+                    f"**Pfad:** `{project.path}`\n\n"
+                    f"**Git:** `{project.git_remote}`\n\n"
+                    f"**Codacy:** {project.codacy_provider}/{project.codacy_org}"
+                )
 
             def on_issue_select(evt: gr.SelectData, data):
                 try:
@@ -370,7 +413,7 @@ class KIWorkspaceApp:
                     logger.error(f"Fehler bei Issue-Auswahl: {e}")
                 return None, "", "", "", "", "", ""
 
-            # Filter-Updates
+            # Filter-Inputs für Issues
             filter_inputs = [
                 project_dropdown,
                 priority_filter,
@@ -379,7 +422,24 @@ class KIWorkspaceApp:
                 search_box,
                 show_fps,
             ]
-            for inp in filter_inputs:
+
+            # Projekt-Wechsel aktualisiert alles
+            project_dropdown.change(
+                fn=update_issues,
+                inputs=filter_inputs,
+                outputs=issues_table,
+            ).then(
+                fn=self.get_stats,
+                inputs=[project_dropdown],
+                outputs=dashboard_stats,
+            ).then(
+                fn=update_project_info,
+                inputs=[project_dropdown],
+                outputs=project_info,
+            )
+
+            # Filter-Updates (ohne Projekt-Dropdown, das hat eigenen Handler)
+            for inp in [priority_filter, status_filter, scan_type_filter, search_box, show_fps]:
                 inp.change(
                     fn=update_issues,
                     inputs=filter_inputs,
@@ -412,24 +472,32 @@ class KIWorkspaceApp:
                 outputs=issues_table,
             )
 
-            # Sync Button
+            # Sync Button - mit automatischem Refresh der Issues-Tabelle
             sync_btn.click(
                 fn=self.sync_from_codacy,
                 inputs=[project_dropdown],
                 outputs=sync_status,
-            )
-
-            # Statistiken
-            refresh_stats_btn.click(
+            ).then(
+                fn=update_issues,
+                inputs=filter_inputs,
+                outputs=issues_table,
+            ).then(
                 fn=self.get_stats,
                 inputs=[project_dropdown],
-                outputs=stats_display,
+                outputs=dashboard_stats,
+            )
+
+            # Dashboard aktualisieren
+            refresh_dashboard_btn.click(
+                fn=self.get_stats,
+                inputs=[project_dropdown],
+                outputs=dashboard_stats,
             )
 
             # Initial load
             app.load(
                 fn=lambda: self.get_stats(None),
-                outputs=stats_display,
+                outputs=dashboard_stats,
             )
 
         return app
