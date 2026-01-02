@@ -8,7 +8,8 @@ from core.github_api import GitHubAPI
 class TestGitHubAPI:
     """Tests für GitHub API Client."""
 
-    def test_no_token_returns_empty(self):
+    @patch("core.github_api.get_gh_cli_token", return_value=None)
+    def test_no_token_returns_empty(self, mock_cli):
         """Ohne Token gibt get_repos leere Liste zurück."""
         api = GitHubAPI(token=None)
         repos = api.get_repos()
@@ -23,7 +24,8 @@ class TestGitHubAPI:
         assert headers["Authorization"] == "Bearer test_token_123"
         assert headers["Accept"] == "application/vnd.github+json"
 
-    def test_headers_without_token(self):
+    @patch("core.github_api.get_gh_cli_token", return_value=None)
+    def test_headers_without_token(self, mock_cli):
         """Headers ohne Authorization wenn kein Token."""
         api = GitHubAPI(token=None)
         headers = api._headers()
@@ -31,7 +33,8 @@ class TestGitHubAPI:
         assert "Authorization" not in headers
         assert "Accept" in headers
 
-    def test_set_token(self):
+    @patch("core.github_api.get_gh_cli_token", return_value=None)
+    def test_set_token(self, mock_cli):
         """Token setzen funktioniert."""
         api = GitHubAPI()
         assert api.token is None
@@ -117,7 +120,8 @@ class TestGitHubAPI:
         assert len(repos) == 1
         assert repos[0]["name"] == "public-repo"
 
-    def test_test_connection_no_token(self):
+    @patch("core.github_api.get_gh_cli_token", return_value=None)
+    def test_test_connection_no_token(self, mock_cli):
         """test_connection ohne Token gibt Fehler."""
         api = GitHubAPI(token=None)
         success, message = api.test_connection()
@@ -138,3 +142,9 @@ class TestGitHubAPI:
 
         assert success is True
         assert "testuser" in message
+
+    @patch("core.github_api.get_gh_cli_token", return_value="gh_cli_token_123")
+    def test_gh_cli_token_fallback(self, mock_cli):
+        """Token wird von gh CLI geladen wenn kein anderer verfügbar."""
+        api = GitHubAPI(token=None, db=None)
+        assert api.token == "gh_cli_token_123"

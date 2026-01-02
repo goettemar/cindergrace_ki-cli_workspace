@@ -11,7 +11,7 @@ import gradio as gr
 
 from core.codacy_sync import CodacySync
 from core.database import DatabaseManager, Project
-from core.github_api import GitHubAPI
+from core.github_api import GitHubAPI, get_gh_cli_status, run_gh_command
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -373,6 +373,55 @@ class KIWorkspaceApp:
                         interactive=False,
                     )
 
+                # === GitHub Status Tab ===
+                with gr.Tab("🐙 GitHub"):
+                    gr.Markdown("### GitHub Status")
+
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            gr.Markdown("#### gh CLI Status")
+                            gh_cli_status_box = gr.Markdown()
+                            refresh_gh_status_btn = gr.Button("🔄 Status aktualisieren")
+
+                        with gr.Column(scale=2):
+                            gr.Markdown("#### Notifications")
+                            gh_notifications_box = gr.Markdown()
+                            refresh_notifications_btn = gr.Button("🔄 Notifications laden")
+
+                    gr.Markdown("---")
+                    gr.Markdown("#### Meine Pull Requests")
+
+                    with gr.Row():
+                        pr_filter = gr.Radio(
+                            choices=["Offen", "Erstellt von mir", "Review angefragt"],
+                            value="Offen",
+                            label="Filter",
+                        )
+                        refresh_prs_btn = gr.Button("🔄 PRs laden")
+
+                    gh_prs_table = gr.Dataframe(
+                        headers=["Repo", "Titel", "Status", "Erstellt", "URL"],
+                        datatype=["str", "str", "str", "str", "str"],
+                        interactive=False,
+                    )
+
+                    gr.Markdown("---")
+                    gr.Markdown("#### gh CLI Befehl ausführen")
+
+                    with gr.Row():
+                        gh_command_input = gr.Textbox(
+                            label="Befehl (ohne 'gh' Prefix)",
+                            placeholder="repo list --limit 10",
+                            scale=4,
+                        )
+                        run_gh_cmd_btn = gr.Button("▶️ Ausführen", scale=1)
+
+                    gh_command_output = gr.Code(
+                        label="Ausgabe",
+                        language=None,
+                        lines=10,
+                    )
+
                 # === KI-Übergaben Tab ===
                 with gr.Tab("🤝 KI-Übergaben"):
                     gr.Markdown("### Session-Übergaben zwischen KI-CLIs")
@@ -664,6 +713,135 @@ class KIWorkspaceApp:
                 fn=self.get_stats,
                 inputs=[project_dropdown],
                 outputs=dashboard_stats,
+            )
+
+            # === GitHub Tab Event Handlers ===
+
+            def get_gh_status_display():
+                """Formatierter gh CLI Status."""
+                status = get_gh_cli_status()
+                if not status["available"]:
+                    return "❌ **gh CLI nicht installiert**\n\n`sudo apt install gh` oder [gh.cli.github.com](https://cli.github.com/)"
+                if not status["logged_in"]:
+                    return "⚠️ **Nicht eingeloggt**\n\n`gh auth login`"
+                return (
+                    f"✅ **Eingeloggt als:** {status['user']}\n\n"
+                    f"**Scopes:** {', '.join(status['scopes'])}\n\n"
+                    f"**Protocol:** {status['protocol']}"
+                )
+
+            def get_gh_notifications():
+                """Lädt GitHub Notifications."""
+                success, output = run_gh_command(
+                    ["api", "notifications", "--jq", '.[].subject | .title + " (" + .type + ")"'],
+                    timeout=15,
+                )
+                if not success:
+                    return f"❌ Fehler: {output}"
+                if not output.strip():
+                    return "✅ Keine neuen Notifications"
+                lines = output.strip().split("\n")[:10]  # Max 10
+                return "**Neueste Notifications:**\n\n" + "\n".join(f"• {line}" for line in lines)
+
+            def get_gh_prs(filter_type):
+                """Lädt Pull Requests nach Filter."""
+                if filter_type == "Offen":
+                    cmd = [
+                        "pr",
+                        "list",
+                        "--state",
+                        "open",
+                        "--limit",
+                        "20",
+                        "--json",
+                        "repository,title,state,createdAt,url",
+                    ]
+                elif filter_type == "Erstellt von mir":
+                    cmd = [
+                        "pr",
+                        "list",
+                        "--author",
+                        "@me",
+                        "--state",
+                        "all",
+                        "--limit",
+                        "20",
+                        "--json",
+                        "repository,title,state,createdAt,url",
+                    ]
+                else:  # Review angefragt
+                    cmd = [
+                        "pr",
+                        "list",
+                        "--search",
+                        "review-requested:@me",
+                        "--state",
+                        "open",
+                        "--limit",
+                        "20",
+                        "--json",
+                        "repository,title,state,createdAt,url",
+                    ]
+
+                success, output = run_gh_command(cmd, timeout=30)
+                if not success:
+                    return []
+
+                try:
+                    import json
+
+                    prs = json.loads(output)
+                    rows = []
+                    for pr in prs:
+                        repo = pr.get("repository", {}).get("name", "?")
+                        title = pr.get("title", "")[:50]
+                        state = pr.get("state", "")
+                        created = pr.get("createdAt", "")[:10]
+                        url = pr.get("url", "")
+                        rows.append([repo, title, state, created, url])
+                    return rows
+                except (json.JSONDecodeError, KeyError):
+                    return []
+
+            def run_custom_gh_command(cmd_str):
+                """Führt benutzerdefinierten gh Befehl aus."""
+                if not cmd_str or not cmd_str.strip():
+                    return "Bitte Befehl eingeben"
+                # Sicherheitscheck: Keine gefährlichen Befehle
+                dangerous = ["delete", "rm", "remove", "--force", "-f"]
+                if any(d in cmd_str.lower() for d in dangerous):
+                    return "⚠️ Potenziell gefährlicher Befehl blockiert"
+                args = cmd_str.strip().split()
+                success, output = run_gh_command(args, timeout=30)
+                return output if output else "(Keine Ausgabe)"
+
+            # Event Bindings für GitHub Tab
+            refresh_gh_status_btn.click(
+                fn=get_gh_status_display,
+                outputs=gh_cli_status_box,
+            )
+
+            refresh_notifications_btn.click(
+                fn=get_gh_notifications,
+                outputs=gh_notifications_box,
+            )
+
+            refresh_prs_btn.click(
+                fn=get_gh_prs,
+                inputs=[pr_filter],
+                outputs=gh_prs_table,
+            )
+
+            pr_filter.change(
+                fn=get_gh_prs,
+                inputs=[pr_filter],
+                outputs=gh_prs_table,
+            )
+
+            run_gh_cmd_btn.click(
+                fn=run_custom_gh_command,
+                inputs=[gh_command_input],
+                outputs=gh_command_output,
             )
 
             # === Settings Event Handlers ===
@@ -961,11 +1139,18 @@ class KIWorkspaceApp:
                     get_github_token_status(),
                     get_codacy_token_status(),
                     load_projects_table(False),
+                    get_gh_status_display(),
                 )
 
             app.load(
                 fn=initial_load,
-                outputs=[dashboard_stats, github_token_status, token_status_box, projects_table],
+                outputs=[
+                    dashboard_stats,
+                    github_token_status,
+                    token_status_box,
+                    projects_table,
+                    gh_cli_status_box,
+                ],
             )
 
         return app
