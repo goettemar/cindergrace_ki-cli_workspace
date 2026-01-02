@@ -323,20 +323,26 @@ class KIWorkspaceApp:
                 return self.get_issues_table(*args)
 
             def on_issue_select(evt: gr.SelectData, data):
-                if evt.index and len(evt.index) > 0:
-                    row_idx = evt.index[0]
-                    if data and row_idx < len(data):
-                        issue_id = data[row_idx][0]
-                        details = self.get_issue_details(issue_id)
-                        return (
-                            issue_id,
-                            details["title"],
-                            details["message"],
-                            details["file_info"],
-                            details["tool_info"],
-                            details.get("cve_info", ""),
-                            details["fp_info"],
-                        )
+                try:
+                    # Gradio 6.x: evt.index ist ein Tuple (row, col) oder nur row
+                    if evt.index is not None:
+                        row_idx = evt.index[0] if isinstance(evt.index, list | tuple) else evt.index
+                        if data is not None and row_idx < len(data):
+                            # data kann Liste oder Dict sein
+                            row = data[row_idx] if isinstance(data, list) else data.iloc[row_idx]
+                            issue_id = row[0] if isinstance(row, list | tuple) else row.iloc[0]
+                            details = self.get_issue_details(int(issue_id))
+                            return (
+                                int(issue_id),
+                                details.get("title", ""),
+                                details.get("message", ""),
+                                details.get("file_info", ""),
+                                details.get("tool_info", ""),
+                                details.get("cve_info", ""),
+                                details.get("fp_info", ""),
+                            )
+                except Exception as e:
+                    logger.error(f"Fehler bei Issue-Auswahl: {e}")
                 return None, "", "", "", "", "", ""
 
             # Filter-Updates
