@@ -360,34 +360,67 @@ class DatabaseManager:
             now = datetime.now().isoformat()
 
             if existing:
-                # Update (aber FP-Felder nicht überschreiben wenn lokal gesetzt)
-                conn.execute(
-                    """
-                    UPDATE issue_meta SET
-                        priority = ?, status = ?, scan_type = ?, title = ?,
-                        message = ?, file_path = ?, line_number = ?, tool = ?,
-                        rule = ?, category = ?, cve = ?, affected_version = ?,
-                        fixed_version = ?, synced_at = ?
-                    WHERE external_id = ?
-                    """,
-                    (
-                        issue.priority,
-                        issue.status,
-                        issue.scan_type,
-                        issue.title,
-                        issue.message,
-                        issue.file_path,
-                        issue.line_number,
-                        issue.tool,
-                        issue.rule,
-                        issue.category,
-                        issue.cve,
-                        issue.affected_version,
-                        issue.fixed_version,
-                        now,
-                        issue.external_id,
-                    ),
-                )
+                # Update - FP-Felder werden aktualisiert wenn von Codacy gesetzt
+                if issue.is_false_positive:
+                    # Von Codacy als Ignored markiert - FP-Status übernehmen
+                    conn.execute(
+                        """
+                        UPDATE issue_meta SET
+                            priority = ?, status = ?, scan_type = ?, title = ?,
+                            message = ?, file_path = ?, line_number = ?, tool = ?,
+                            rule = ?, category = ?, cve = ?, affected_version = ?,
+                            fixed_version = ?, synced_at = ?,
+                            is_false_positive = 1, fp_reason = COALESCE(fp_reason, ?)
+                        WHERE external_id = ?
+                        """,
+                        (
+                            issue.priority,
+                            issue.status,
+                            issue.scan_type,
+                            issue.title,
+                            issue.message,
+                            issue.file_path,
+                            issue.line_number,
+                            issue.tool,
+                            issue.rule,
+                            issue.category,
+                            issue.cve,
+                            issue.affected_version,
+                            issue.fixed_version,
+                            now,
+                            issue.fp_reason,
+                            issue.external_id,
+                        ),
+                    )
+                else:
+                    # Normale Update ohne FP-Felder zu überschreiben
+                    conn.execute(
+                        """
+                        UPDATE issue_meta SET
+                            priority = ?, status = ?, scan_type = ?, title = ?,
+                            message = ?, file_path = ?, line_number = ?, tool = ?,
+                            rule = ?, category = ?, cve = ?, affected_version = ?,
+                            fixed_version = ?, synced_at = ?
+                        WHERE external_id = ?
+                        """,
+                        (
+                            issue.priority,
+                            issue.status,
+                            issue.scan_type,
+                            issue.title,
+                            issue.message,
+                            issue.file_path,
+                            issue.line_number,
+                            issue.tool,
+                            issue.rule,
+                            issue.category,
+                            issue.cve,
+                            issue.affected_version,
+                            issue.fixed_version,
+                            now,
+                            issue.external_id,
+                        ),
+                    )
                 issue.id = existing["id"]
             else:
                 # Insert

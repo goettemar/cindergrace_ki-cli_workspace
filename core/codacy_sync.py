@@ -294,22 +294,30 @@ class CodacySync:
             "Low": "Low",
         }
 
-        # 1. SRM Items (Security) holen
+        # 1. SRM Items (Security) holen - inkl. Ignored für False Positives
         try:
             srm_items = self.fetch_srm_items(
-                provider, org, repo, statuses=["OnTrack", "DueSoon", "Overdue"]
+                provider,
+                org,
+                repo,
+                statuses=["OnTrack", "DueSoon", "Overdue", "Ignored", "ClosedOnTime", "ClosedLate"],
             )
             for item in srm_items:
+                codacy_status = item.get("status", "")
+                is_ignored = codacy_status == "Ignored"
+
                 issue = Issue(
                     project_id=project.id,
                     external_id=item.get("id", ""),
                     priority=item.get("priority", "Medium"),
-                    status=status_map.get(item.get("status", ""), "open"),
+                    status=status_map.get(codacy_status, "open"),
                     scan_type=item.get("scanType", "SAST"),
                     title=item.get("title", "")[:200],
                     message=item.get("title", ""),
                     category=item.get("securityCategory", ""),
                     created_at=self._parse_date(item.get("openedAt")),
+                    is_false_positive=is_ignored,
+                    fp_reason="Von Codacy als Ignored markiert" if is_ignored else None,
                 )
                 db.upsert_issue(issue)
                 stats["srm"] += 1
