@@ -4,6 +4,7 @@ Database Manager für KI-CLI Workspace.
 SQLite mit FTS5 für Volltextsuche.
 """
 
+import contextlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -22,6 +23,9 @@ class Project:
     git_remote: str = ""
     codacy_provider: str = "gh"  # gh, gl, bb
     codacy_org: str = ""
+    github_owner: str = ""  # GitHub Owner/Org
+    has_codacy: bool = True  # Hat Codacy-Integration
+    is_archived: bool = False  # Archiviert (soft delete)
     last_sync: datetime | None = None
 
 
@@ -115,9 +119,20 @@ class DatabaseManager:
                     git_remote TEXT,
                     codacy_provider TEXT DEFAULT 'gh',
                     codacy_org TEXT,
+                    github_owner TEXT,
+                    has_codacy INTEGER DEFAULT 1,
+                    is_archived INTEGER DEFAULT 0,
                     last_sync TIMESTAMP
                 )
             """)
+
+            # Migration: Neue Spalten hinzufügen falls nicht vorhanden
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE projects ADD COLUMN github_owner TEXT")
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE projects ADD COLUMN has_codacy INTEGER DEFAULT 1")
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE projects ADD COLUMN is_archived INTEGER DEFAULT 0")
 
             # Issues (FTS5 für Volltextsuche)
             # Prüfen ob Tabelle existiert
@@ -263,8 +278,9 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO projects (name, path, git_remote, codacy_provider, codacy_org)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO projects (name, path, git_remote, codacy_provider, codacy_org,
+                                      github_owner, has_codacy, is_archived)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project.name,
@@ -272,11 +288,22 @@ class DatabaseManager:
                     project.git_remote,
                     project.codacy_provider,
                     project.codacy_org,
+                    project.github_owner,
+                    1 if project.has_codacy else 0,
+                    1 if project.is_archived else 0,
                 ),
             )
             project.id = cursor.lastrowid
             conn.commit()
         return project
+
+    def _row_to_project(self, row: sqlite3.Row) -> Project:
+        """Konvertiert eine DB-Row zu einem Project-Objekt."""
+        data = dict(row)
+        # Boolean-Felder konvertieren
+        data["has_codacy"] = bool(data.get("has_codacy", 1))
+        data["is_archived"] = bool(data.get("is_archived", 0))
+        return Project(**data)
 
     def get_project(self, project_id: int) -> Project | None:
         """Lädt ein Projekt nach ID."""
@@ -284,7 +311,7 @@ class DatabaseManager:
             cursor = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
             row = cursor.fetchone()
             if row:
-                return Project(**dict(row))
+                return self._row_to_project(row)
         return None
 
     def get_project_by_name(self, name: str) -> Project | None:
@@ -293,14 +320,22 @@ class DatabaseManager:
             cursor = conn.execute("SELECT * FROM projects WHERE name = ?", (name,))
             row = cursor.fetchone()
             if row:
-                return Project(**dict(row))
+                return self._row_to_project(row)
         return None
 
-    def get_all_projects(self) -> list[Project]:
-        """Lädt alle Projekte."""
+    def get_all_projects(self, include_archived: bool = False) -> list[Project]:
+        """
+        Lädt alle Projekte.
+
+        Args:
+            include_archived: Auch archivierte Projekte einbeziehen
+        """
         with self._get_connection() as conn:
-            cursor = conn.execute("SELECT * FROM projects ORDER BY name")
-            return [Project(**dict(row)) for row in cursor.fetchall()]
+            if include_archived:
+                cursor = conn.execute("SELECT * FROM projects ORDER BY is_archived, name")
+            else:
+                cursor = conn.execute("SELECT * FROM projects WHERE is_archived = 0 ORDER BY name")
+            return [self._row_to_project(row) for row in cursor.fetchall()]
 
     def update_project_sync_time(self, project_id: int) -> None:
         """Aktualisiert den letzten Sync-Zeitpunkt."""
@@ -657,7 +692,8 @@ class DatabaseManager:
                 """
                 UPDATE projects SET
                     name = ?, path = ?, git_remote = ?,
-                    codacy_provider = ?, codacy_org = ?
+                    codacy_provider = ?, codacy_org = ?,
+                    github_owner = ?, has_codacy = ?, is_archived = ?
                 WHERE id = ?
                 """,
                 (
@@ -666,13 +702,28 @@ class DatabaseManager:
                     project.git_remote,
                     project.codacy_provider,
                     project.codacy_org,
+                    project.github_owner,
+                    1 if project.has_codacy else 0,
+                    1 if project.is_archived else 0,
                     project.id,
                 ),
             )
             conn.commit()
 
+    def archive_project(self, project_id: int) -> None:
+        """Archiviert ein Projekt (soft delete)."""
+        with self._get_connection() as conn:
+            conn.execute("UPDATE projects SET is_archived = 1 WHERE id = ?", (project_id,))
+            conn.commit()
+
+    def unarchive_project(self, project_id: int) -> None:
+        """Stellt ein archiviertes Projekt wieder her."""
+        with self._get_connection() as conn:
+            conn.execute("UPDATE projects SET is_archived = 0 WHERE id = ?", (project_id,))
+            conn.commit()
+
     def delete_project(self, project_id: int) -> None:
-        """Löscht ein Projekt und alle zugehörigen Issues."""
+        """Löscht ein Projekt und alle zugehörigen Issues (permanent)."""
         with self._get_connection() as conn:
             conn.execute("DELETE FROM issue_meta WHERE project_id = ?", (project_id,))
             conn.execute("DELETE FROM handoffs WHERE project_id = ?", (project_id,))

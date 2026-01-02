@@ -32,3 +32,6 @@ Thumbs.db
 .env
 *.env.local
 .secret
+.coverage
+htmlcov/
+.pytest_cache/

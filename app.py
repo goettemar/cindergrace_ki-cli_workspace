@@ -11,6 +11,7 @@ import gradio as gr
 
 from core.codacy_sync import CodacySync
 from core.database import DatabaseManager, Project
+from core.github_api import GitHubAPI
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +25,7 @@ class KIWorkspaceApp:
         """Initialisiert die Anwendung."""
         self.db = DatabaseManager()
         self.codacy = CodacySync(db=self.db)
+        self.github = GitHubAPI(db=self.db)
         self._init_demo_data()
 
     def _init_demo_data(self) -> None:
@@ -65,10 +67,18 @@ class KIWorkspaceApp:
                 self.db.create_project(p)
             logger.info("Demo-Projekte angelegt")
 
-    def get_project_choices(self) -> list[tuple[str, int]]:
+    def get_project_choices(self, include_archived: bool = False) -> list[tuple[str, int]]:
         """Gibt Projekt-Auswahl für Dropdown zurück."""
-        projects = self.db.get_all_projects()
-        return [(p.name, p.id) for p in projects]
+        projects = self.db.get_all_projects(include_archived=include_archived)
+        result = []
+        for p in projects:
+            label = p.name
+            if p.is_archived:
+                label = f"📦 {p.name} (archiviert)"
+            elif not p.has_codacy:
+                label = f"🔒 {p.name}"  # Nur GitHub, kein Codacy
+            result.append((label, p.id))
+        return result
 
     def get_issues_table(
         self,
@@ -373,9 +383,33 @@ class KIWorkspaceApp:
                     with gr.Tabs():
                         # --- API Keys ---
                         with gr.Tab("🔑 API Keys"):
+                            # GitHub Token
+                            gr.Markdown("## GitHub Token")
+                            gr.Markdown(
+                                "Für Zugriff auf private Repositories. "
+                                "[→ Token erstellen](https://github.com/settings/tokens) "
+                                "(Scope: `repo` für private Repos)"
+                            )
+                            github_token_status = gr.Markdown()
+
+                            with gr.Row():
+                                github_token_input = gr.Textbox(
+                                    label="GitHub Token",
+                                    type="password",
+                                    placeholder="ghp_... oder github_pat_...",
+                                    scale=4,
+                                )
+                                save_github_token_btn = gr.Button(
+                                    "💾 Speichern", variant="primary", scale=1
+                                )
+                            github_token_result = gr.Markdown()
+
+                            gr.Markdown("---")
+
+                            # Codacy Token
                             gr.Markdown("## Codacy API Token")
                             gr.Markdown(
-                                "Der Token wird **verschlüsselt** in der lokalen Datenbank gespeichert. "
+                                "Für Issue-Synchronisation. "
                                 "[→ Token erstellen](https://app.codacy.com/account/apiTokens)"
                             )
 
@@ -384,10 +418,9 @@ class KIWorkspaceApp:
                                 elem_classes=["token-status-box"],
                             )
 
-                            gr.Markdown("### Neuen Token eingeben")
                             with gr.Row():
                                 api_token_input = gr.Textbox(
-                                    label="Token",
+                                    label="Codacy Token",
                                     type="password",
                                     placeholder="Neuen Token hier eingeben um zu ersetzen...",
                                     scale=4,
@@ -400,50 +433,90 @@ class KIWorkspaceApp:
 
                         # --- Projekte ---
                         with gr.Tab("📁 Projekte"):
-                            gr.Markdown("### Projekt hinzufügen")
+                            # GitHub Import
+                            gr.Markdown("### 🐙 Von GitHub laden")
+                            gr.Markdown(
+                                "Lädt alle Repositories aus deinem GitHub-Account. "
+                                "Erfordert einen GitHub Token (siehe API Keys)."
+                            )
 
                             with gr.Row():
-                                new_project_name = gr.Textbox(
-                                    label="Name", placeholder="mein-projekt"
+                                include_private_repos = gr.Checkbox(
+                                    label="Private Repos einbeziehen", value=True
                                 )
-                                new_project_path = gr.Textbox(
-                                    label="Lokaler Pfad", placeholder="/home/user/projekte/..."
-                                )
-
-                            with gr.Row():
-                                new_project_remote = gr.Textbox(
-                                    label="Git Remote", placeholder="git@github.com:user/repo.git"
-                                )
-                                new_project_provider = gr.Dropdown(
-                                    choices=[
-                                        ("GitHub", "gh"),
-                                        ("GitLab", "gl"),
-                                        ("Bitbucket", "bb"),
-                                    ],
-                                    value="gh",
-                                    label="Provider",
-                                )
-                                new_project_org = gr.Textbox(
-                                    label="Organisation", placeholder="username"
+                                load_github_btn = gr.Button(
+                                    "🔄 Repos von GitHub laden", variant="primary"
                                 )
 
-                            add_project_btn = gr.Button("➕ Projekt hinzufügen", variant="primary")
-                            add_project_status = gr.Markdown()
+                            github_import_status = gr.Markdown()
 
                             gr.Markdown("---")
                             gr.Markdown("### Vorhandene Projekte")
 
+                            with gr.Row():
+                                show_archived_toggle = gr.Checkbox(
+                                    label="📦 Archivierte anzeigen", value=False
+                                )
+                                refresh_projects_btn = gr.Button("🔄 Aktualisieren")
+
                             projects_table = gr.Dataframe(
-                                headers=["ID", "Name", "Pfad", "Provider", "Organisation"],
+                                headers=[
+                                    "ID",
+                                    "Name",
+                                    "Owner",
+                                    "Codacy",
+                                    "Status",
+                                ],
                                 datatype=["number", "str", "str", "str", "str"],
                                 interactive=False,
                             )
 
+                            # Projekt-Aktionen
+                            gr.Markdown("### Aktionen")
                             with gr.Row():
-                                delete_project_id = gr.Number(label="Projekt-ID zum Löschen")
-                                delete_project_btn = gr.Button("🗑️ Löschen", variant="stop")
+                                action_project_id = gr.Number(label="Projekt-ID", precision=0)
+                                toggle_codacy_btn = gr.Button("🔀 Codacy umschalten")
+                                archive_btn = gr.Button("📦 Archivieren")
+                                unarchive_btn = gr.Button("📤 Wiederherstellen")
 
-                            delete_project_status = gr.Markdown()
+                            project_action_status = gr.Markdown()
+
+                            # Manuelles Hinzufügen (eingeklappt)
+                            with gr.Accordion("➕ Manuell hinzufügen", open=False):
+                                with gr.Row():
+                                    new_project_name = gr.Textbox(
+                                        label="Name", placeholder="mein-projekt"
+                                    )
+                                    new_project_path = gr.Textbox(
+                                        label="Lokaler Pfad",
+                                        placeholder="/home/user/projekte/...",
+                                    )
+
+                                with gr.Row():
+                                    new_project_remote = gr.Textbox(
+                                        label="Git Remote",
+                                        placeholder="git@github.com:user/repo.git",
+                                    )
+                                    new_project_provider = gr.Dropdown(
+                                        choices=[
+                                            ("GitHub", "gh"),
+                                            ("GitLab", "gl"),
+                                            ("Bitbucket", "bb"),
+                                        ],
+                                        value="gh",
+                                        label="Provider",
+                                    )
+                                    new_project_org = gr.Textbox(
+                                        label="Organisation", placeholder="username"
+                                    )
+
+                                new_project_has_codacy = gr.Checkbox(
+                                    label="Hat Codacy-Integration", value=True
+                                )
+                                add_project_btn = gr.Button(
+                                    "➕ Projekt hinzufügen", variant="primary"
+                                )
+                                add_project_status = gr.Markdown()
 
                         # --- Über ---
                         with gr.Tab("ℹ️ Über"):
@@ -595,40 +668,182 @@ class KIWorkspaceApp:
 
             # === Settings Event Handlers ===
 
-            def save_api_token(token):
-                if not token or not token.strip():
-                    return "❌ Bitte Token eingeben", get_token_status_display()
-                self.codacy.set_api_token(token.strip())
-                return "✅ Token gespeichert!", get_token_status_display()
+            # --- Token Status Funktionen ---
+            def get_github_token_status():
+                """Gibt formatierten GitHub Token-Status zurück."""
+                token = self.db.get_setting("github_token")
+                if token:
+                    masked = token[:4] + "..." + token[-4:] if len(token) > 10 else "***"
+                    # Verbindung testen
+                    success, msg = self.github.test_connection()
+                    if success:
+                        return (
+                            f"✅ **Verbunden:** {msg.replace('Verbunden als: ', '')}\n\n`{masked}`"
+                        )
+                    return f"⚠️ **Token gespeichert aber Verbindung fehlgeschlagen**\n\n`{masked}`"
+                return "❌ Kein GitHub Token konfiguriert"
 
-            def get_token_status_display():
-                """Gibt formatierten Token-Status zurück."""
+            def get_codacy_token_status():
+                """Gibt formatierten Codacy Token-Status zurück."""
                 token = self.db.get_setting("codacy_api_token")
                 if token:
                     masked = token[:4] + "..." + token[-4:] if len(token) > 10 else "***"
                     return (
                         f"### ✅ Token konfiguriert\n\n"
                         f"**Gespeicherter Token:** `{masked}`\n\n"
-                        f"*Der Token ist verschlüsselt in der Datenbank gespeichert.*"
+                        f"*Verschlüsselt in der Datenbank gespeichert.*"
                     )
                 elif os.environ.get("CODACY_API_TOKEN"):
                     return (
                         "### ⚠️ Token aus Umgebungsvariable\n\n"
-                        "Der Token wird aus `CODACY_API_TOKEN` geladen.\n\n"
                         "*Speichere ihn in der DB für mehr Sicherheit.*"
                     )
+                return "### ❌ Kein Token konfiguriert"
+
+            # --- Token Speichern ---
+            def save_github_token(token):
+                if not token or not token.strip():
+                    return "❌ Bitte Token eingeben", get_github_token_status()
+                self.github.set_token(token.strip())
+                return "✅ GitHub Token gespeichert!", get_github_token_status()
+
+            def save_codacy_token(token):
+                if not token or not token.strip():
+                    return "❌ Bitte Token eingeben", get_codacy_token_status()
+                self.codacy.set_api_token(token.strip())
+                return "✅ Codacy Token gespeichert!", get_codacy_token_status()
+
+            # --- Projekte Tabelle ---
+            def load_projects_table(show_archived=False):
+                """Lädt Projekte für Tabelle."""
+                projects = self.db.get_all_projects(include_archived=show_archived)
+                rows = []
+                for p in projects:
+                    codacy_status = "✅" if p.has_codacy else "❌"
+                    if p.is_archived:
+                        status = "📦 Archiviert"
+                    elif p.is_archived is False and not p.has_codacy:
+                        status = "🔒 Nur GitHub"
+                    else:
+                        status = "✅ Aktiv"
+                    rows.append(
+                        [p.id, p.name, p.github_owner or p.codacy_org, codacy_status, status]
+                    )
+                return rows
+
+            def refresh_project_dropdown(show_archived=False):
+                return gr.update(choices=self.get_project_choices(include_archived=show_archived))
+
+            # --- GitHub Import ---
+            def load_repos_from_github(include_private, show_archived):
+                """Lädt Repos von GitHub und erstellt/aktualisiert Projekte."""
+                if not self.github.token:
+                    return (
+                        "❌ Kein GitHub Token konfiguriert!\n\n"
+                        "Bitte zuerst unter API Keys einen Token hinterlegen.",
+                        load_projects_table(show_archived),
+                    )
+
+                repos = self.github.get_repos(include_private=include_private)
+                if not repos:
+                    return (
+                        "⚠️ Keine Repositories gefunden oder Fehler beim Laden",
+                        load_projects_table(show_archived),
+                    )
+
+                added = 0
+                updated = 0
+                skipped = 0
+
+                for repo in repos:
+                    # Prüfen ob bereits vorhanden
+                    existing = None
+                    for p in self.db.get_all_projects(include_archived=True):
+                        if p.name == repo["name"] and (
+                            p.github_owner == repo["owner"] or p.codacy_org == repo["owner"]
+                        ):
+                            existing = p
+                            break
+
+                    if existing:
+                        # Aktualisieren wenn nötig
+                        if existing.github_owner != repo["owner"]:
+                            existing.github_owner = repo["owner"]
+                            self.db.update_project(existing)
+                            updated += 1
+                        else:
+                            skipped += 1
+                    else:
+                        # Neues Projekt anlegen
+                        project = Project(
+                            name=repo["name"],
+                            path="",  # Lokal nicht bekannt
+                            git_remote=repo["ssh_url"],
+                            codacy_provider="gh",
+                            codacy_org=repo["owner"],
+                            github_owner=repo["owner"],
+                            has_codacy=True,  # Standard: annehmen dass Codacy vorhanden
+                            is_archived=repo.get("archived", False),
+                        )
+                        self.db.create_project(project)
+                        added += 1
+
                 return (
-                    "### ❌ Kein Token konfiguriert\n\n"
-                    "Bitte gib unten einen Codacy API Token ein."
+                    f"✅ **Import abgeschlossen**\n\n"
+                    f"- **Neu:** {added} Projekte\n"
+                    f"- **Aktualisiert:** {updated}\n"
+                    f"- **Übersprungen:** {skipped} (bereits vorhanden)",
+                    load_projects_table(show_archived),
                 )
 
-            def load_projects_table():
-                projects = self.db.get_all_projects()
-                return [[p.id, p.name, p.path, p.codacy_provider, p.codacy_org] for p in projects]
+            # --- Projekt-Aktionen ---
+            def toggle_project_codacy(project_id, show_archived):
+                if not project_id:
+                    return "❌ Keine Projekt-ID angegeben", load_projects_table(show_archived)
+                try:
+                    project = self.db.get_project(int(project_id))
+                    if not project:
+                        return "❌ Projekt nicht gefunden", load_projects_table(show_archived)
+                    project.has_codacy = not project.has_codacy
+                    self.db.update_project(project)
+                    status = "aktiviert" if project.has_codacy else "deaktiviert"
+                    return f"✅ Codacy für '{project.name}' {status}", load_projects_table(
+                        show_archived
+                    )
+                except Exception as e:
+                    return f"❌ Fehler: {e}", load_projects_table(show_archived)
 
-            def add_project(name, path, remote, provider, org):
+            def archive_project(project_id, show_archived):
+                if not project_id:
+                    return "❌ Keine Projekt-ID angegeben", load_projects_table(show_archived)
+                try:
+                    project = self.db.get_project(int(project_id))
+                    if not project:
+                        return "❌ Projekt nicht gefunden", load_projects_table(show_archived)
+                    self.db.archive_project(int(project_id))
+                    return f"📦 Projekt '{project.name}' archiviert", load_projects_table(
+                        show_archived
+                    )
+                except Exception as e:
+                    return f"❌ Fehler: {e}", load_projects_table(show_archived)
+
+            def unarchive_project(project_id, show_archived):
+                if not project_id:
+                    return "❌ Keine Projekt-ID angegeben", load_projects_table(show_archived)
+                try:
+                    project = self.db.get_project(int(project_id))
+                    if not project:
+                        return "❌ Projekt nicht gefunden", load_projects_table(show_archived)
+                    self.db.unarchive_project(int(project_id))
+                    return f"📤 Projekt '{project.name}' wiederhergestellt", load_projects_table(
+                        show_archived
+                    )
+                except Exception as e:
+                    return f"❌ Fehler: {e}", load_projects_table(show_archived)
+
+            def add_project(name, path, remote, provider, org, has_codacy, show_archived):
                 if not name or not name.strip():
-                    return "❌ Name ist erforderlich", load_projects_table()
+                    return "❌ Name ist erforderlich", load_projects_table(show_archived)
                 try:
                     project = Project(
                         name=name.strip(),
@@ -636,35 +851,91 @@ class KIWorkspaceApp:
                         git_remote=remote.strip() if remote else "",
                         codacy_provider=provider,
                         codacy_org=org.strip() if org else "",
+                        github_owner=org.strip() if org else "",
+                        has_codacy=has_codacy,
                     )
                     self.db.create_project(project)
-                    return f"✅ Projekt '{name}' hinzugefügt", load_projects_table()
+                    return f"✅ Projekt '{name}' hinzugefügt", load_projects_table(show_archived)
                 except Exception as e:
-                    return f"❌ Fehler: {e}", load_projects_table()
+                    return f"❌ Fehler: {e}", load_projects_table(show_archived)
 
-            def delete_project(project_id):
-                if not project_id:
-                    return "❌ Keine Projekt-ID angegeben", load_projects_table()
-                try:
-                    project = self.db.get_project(int(project_id))
-                    if not project:
-                        return "❌ Projekt nicht gefunden", load_projects_table()
-                    self.db.delete_project(int(project_id))
-                    return f"✅ Projekt '{project.name}' gelöscht", load_projects_table()
-                except Exception as e:
-                    return f"❌ Fehler: {e}", load_projects_table()
+            # === Event Bindings ===
 
-            def refresh_project_dropdown():
-                return gr.update(choices=self.get_project_choices())
+            # GitHub Token speichern
+            save_github_token_btn.click(
+                fn=save_github_token,
+                inputs=[github_token_input],
+                outputs=[github_token_result, github_token_status],
+            )
 
-            # Token speichern
+            # Codacy Token speichern
             save_token_btn.click(
-                fn=save_api_token,
+                fn=save_codacy_token,
                 inputs=[api_token_input],
                 outputs=[token_save_result, token_status_box],
             )
 
-            # Projekt hinzufügen
+            # GitHub Import
+            load_github_btn.click(
+                fn=load_repos_from_github,
+                inputs=[include_private_repos, show_archived_toggle],
+                outputs=[github_import_status, projects_table],
+            ).then(
+                fn=refresh_project_dropdown,
+                inputs=[show_archived_toggle],
+                outputs=[project_dropdown],
+            )
+
+            # Archivierte Toggle
+            show_archived_toggle.change(
+                fn=load_projects_table,
+                inputs=[show_archived_toggle],
+                outputs=[projects_table],
+            ).then(
+                fn=refresh_project_dropdown,
+                inputs=[show_archived_toggle],
+                outputs=[project_dropdown],
+            )
+
+            # Projekte aktualisieren
+            refresh_projects_btn.click(
+                fn=load_projects_table,
+                inputs=[show_archived_toggle],
+                outputs=[projects_table],
+            )
+
+            # Projekt-Aktionen
+            toggle_codacy_btn.click(
+                fn=toggle_project_codacy,
+                inputs=[action_project_id, show_archived_toggle],
+                outputs=[project_action_status, projects_table],
+            ).then(
+                fn=refresh_project_dropdown,
+                inputs=[show_archived_toggle],
+                outputs=[project_dropdown],
+            )
+
+            archive_btn.click(
+                fn=archive_project,
+                inputs=[action_project_id, show_archived_toggle],
+                outputs=[project_action_status, projects_table],
+            ).then(
+                fn=refresh_project_dropdown,
+                inputs=[show_archived_toggle],
+                outputs=[project_dropdown],
+            )
+
+            unarchive_btn.click(
+                fn=unarchive_project,
+                inputs=[action_project_id, show_archived_toggle],
+                outputs=[project_action_status, projects_table],
+            ).then(
+                fn=refresh_project_dropdown,
+                inputs=[show_archived_toggle],
+                outputs=[project_dropdown],
+            )
+
+            # Projekt manuell hinzufügen
             add_project_btn.click(
                 fn=add_project,
                 inputs=[
@@ -673,20 +944,13 @@ class KIWorkspaceApp:
                     new_project_remote,
                     new_project_provider,
                     new_project_org,
+                    new_project_has_codacy,
+                    show_archived_toggle,
                 ],
                 outputs=[add_project_status, projects_table],
             ).then(
                 fn=refresh_project_dropdown,
-                outputs=[project_dropdown],
-            )
-
-            # Projekt löschen
-            delete_project_btn.click(
-                fn=delete_project,
-                inputs=[delete_project_id],
-                outputs=[delete_project_status, projects_table],
-            ).then(
-                fn=refresh_project_dropdown,
+                inputs=[show_archived_toggle],
                 outputs=[project_dropdown],
             )
 
@@ -694,13 +958,14 @@ class KIWorkspaceApp:
             def initial_load():
                 return (
                     self.get_stats(None),
-                    get_token_status_display(),
-                    load_projects_table(),
+                    get_github_token_status(),
+                    get_codacy_token_status(),
+                    load_projects_table(False),
                 )
 
             app.load(
                 fn=initial_load,
-                outputs=[dashboard_stats, token_status_box, projects_table],
+                outputs=[dashboard_stats, github_token_status, token_status_box, projects_table],
             )
 
         return app
