@@ -8,6 +8,7 @@ import logging
 
 import gradio as gr
 
+from core.codacy_sync import CodacySync
 from core.database import DatabaseManager, Project
 
 # Logging konfigurieren
@@ -21,6 +22,7 @@ class KIWorkspaceApp:
     def __init__(self):
         """Initialisiert die Anwendung."""
         self.db = DatabaseManager()
+        self.codacy = CodacySync()
         self._init_demo_data()
 
     def _init_demo_data(self) -> None:
@@ -207,7 +209,7 @@ class KIWorkspaceApp:
         return "\n".join(lines)
 
     def sync_from_codacy(self, project_id: int | None) -> str:
-        """Synchronisiert Issues von Codacy (Placeholder)."""
+        """Synchronisiert Issues von Codacy via REST API."""
         if not project_id:
             return "❌ Kein Projekt ausgewählt"
 
@@ -215,11 +217,34 @@ class KIWorkspaceApp:
         if not project:
             return "❌ Projekt nicht gefunden"
 
-        # TODO: Hier Codacy MCP Integration
-        # Für jetzt nur Timestamp aktualisieren
-        self.db.update_project_sync_time(project_id)
+        # Token prüfen
+        if not self.codacy.api_token:
+            return (
+                "❌ Kein CODACY_API_TOKEN gesetzt!\n\n"
+                "Setze den Token:\n"
+                "export CODACY_API_TOKEN=dein_token\n\n"
+                "Token erstellen: https://app.codacy.com/account/apiTokens"
+            )
 
-        return f"✅ Sync für {project.name} gestartet...\n(MCP-Integration folgt)"
+        # Sync durchführen
+        try:
+            stats = self.codacy.sync_project(self.db, project)
+
+            if "error" in stats:
+                return f"❌ {stats['error']}"
+
+            result = f"✅ Sync für {project.name} abgeschlossen!\n\n"
+            result += f"📊 Security Issues (SRM): {stats['srm']}\n"
+            result += f"📋 Quality Issues: {stats['quality']}\n"
+            result += f"📦 Gesamt: {stats['synced']}"
+
+            if stats.get("errors"):
+                result += f"\n\n⚠️ Fehler: {', '.join(stats['errors'])}"
+
+            return result
+        except Exception as e:
+            logger.error(f"Sync-Fehler: {e}")
+            return f"❌ Sync-Fehler: {e}"
 
     def build_ui(self) -> gr.Blocks:
         """Erstellt die Gradio-Oberfläche."""

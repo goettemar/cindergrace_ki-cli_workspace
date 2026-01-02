@@ -15,6 +15,21 @@ NC='\033[0m' # No Color
 echo -e "${GREEN}🤖 KI-CLI Workspace${NC}"
 echo "================================"
 
+# Codacy Token aus .env laden falls vorhanden
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
+# Token-Status anzeigen
+if [ -n "$CODACY_API_TOKEN" ]; then
+    echo -e "${GREEN}✓ CODACY_API_TOKEN gesetzt${NC}"
+else
+    echo -e "${YELLOW}⚠ CODACY_API_TOKEN nicht gesetzt${NC}"
+    echo "  Für Sync: export CODACY_API_TOKEN=xxx"
+    echo "  Oder: echo 'CODACY_API_TOKEN=xxx' > .env"
+fi
+echo ""
+
 # Python prüfen
 if ! command -v python3 &> /dev/null; then
     echo "❌ Python3 nicht gefunden"
