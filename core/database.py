@@ -70,6 +70,17 @@ class Handoff:
     created_at: datetime | None = None
 
 
+@dataclass
+class Setting:
+    """Einstellungs-Datenmodell."""
+
+    key: str = ""
+    value: str = ""
+    is_encrypted: bool = False
+    description: str = ""
+    updated_at: datetime | None = None
+
+
 class DatabaseManager:
     """SQLite Database Manager mit FTS5 Support."""
 
@@ -229,6 +240,17 @@ class DatabaseManager:
                     context TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (project_id) REFERENCES projects(id)
+                )
+            """)
+
+            # Settings (für API-Keys, Konfiguration etc.)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    is_encrypted INTEGER DEFAULT 0,
+                    description TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
@@ -540,3 +562,119 @@ class DatabaseManager:
                 data["context"] = json.loads(data.get("context") or "{}")
                 return Handoff(**data)
         return None
+
+    # === Settings CRUD ===
+
+    def set_setting(
+        self,
+        key: str,
+        value: str,
+        encrypt: bool = False,
+        description: str = "",
+    ) -> None:
+        """
+        Speichert eine Einstellung.
+
+        Args:
+            key: Einstellungsschlüssel
+            value: Wert (wird bei encrypt=True verschlüsselt)
+            encrypt: Ob der Wert verschlüsselt werden soll
+            description: Beschreibung der Einstellung
+        """
+        from core.crypto import get_crypto
+
+        stored_value = value
+        if encrypt and value:
+            stored_value = get_crypto().encrypt(value)
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO settings (key, value, is_encrypted, description, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    is_encrypted = excluded.is_encrypted,
+                    description = COALESCE(excluded.description, settings.description),
+                    updated_at = excluded.updated_at
+                """,
+                (key, stored_value, 1 if encrypt else 0, description, datetime.now().isoformat()),
+            )
+            conn.commit()
+
+    def get_setting(self, key: str, decrypt: bool = True) -> str | None:
+        """
+        Lädt eine Einstellung.
+
+        Args:
+            key: Einstellungsschlüssel
+            decrypt: Ob verschlüsselte Werte entschlüsselt werden sollen
+
+        Returns:
+            Wert der Einstellung oder None
+        """
+        from core.crypto import get_crypto
+
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT value, is_encrypted FROM settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            if row:
+                value, is_encrypted = row["value"], row["is_encrypted"]
+                if is_encrypted and decrypt and value:
+                    return get_crypto().decrypt(value)
+                return value
+        return None
+
+    def get_all_settings(self) -> list[Setting]:
+        """Lädt alle Einstellungen (Werte bleiben verschlüsselt)."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT * FROM settings ORDER BY key")
+            settings = []
+            for row in cursor.fetchall():
+                settings.append(
+                    Setting(
+                        key=row["key"],
+                        value=row["value"],
+                        is_encrypted=bool(row["is_encrypted"]),
+                        description=row["description"] or "",
+                        updated_at=row["updated_at"],
+                    )
+                )
+            return settings
+
+    def delete_setting(self, key: str) -> None:
+        """Löscht eine Einstellung."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+            conn.commit()
+
+    # === Project erweitert ===
+
+    def update_project(self, project: Project) -> None:
+        """Aktualisiert ein bestehendes Projekt."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE projects SET
+                    name = ?, path = ?, git_remote = ?,
+                    codacy_provider = ?, codacy_org = ?
+                WHERE id = ?
+                """,
+                (
+                    project.name,
+                    project.path,
+                    project.git_remote,
+                    project.codacy_provider,
+                    project.codacy_org,
+                    project.id,
+                ),
+            )
+            conn.commit()
+
+    def delete_project(self, project_id: int) -> None:
+        """Löscht ein Projekt und alle zugehörigen Issues."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM issue_meta WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM handoffs WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            conn.commit()

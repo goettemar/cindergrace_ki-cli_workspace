@@ -5,6 +5,7 @@ Gradio-basierte GUI für Issue-Management und KI-Zusammenarbeit.
 """
 
 import logging
+import os
 
 import gradio as gr
 
@@ -22,7 +23,7 @@ class KIWorkspaceApp:
     def __init__(self):
         """Initialisiert die Anwendung."""
         self.db = DatabaseManager()
-        self.codacy = CodacySync()
+        self.codacy = CodacySync(db=self.db)
         self._init_demo_data()
 
     def _init_demo_data(self) -> None:
@@ -368,9 +369,104 @@ class KIWorkspaceApp:
                     gr.Markdown("*Kommt in Phase 2*")
 
                 # === Einstellungen Tab ===
-                with gr.Tab("⚙️ Einstellungen"):
-                    gr.Markdown("### Projekt-Einstellungen")
-                    gr.Markdown("*Kommt in Phase 2 - Codacy-Konfiguration, Token-Verwaltung*")
+                with gr.Tab("⚙️ Einstellungen"):  # noqa: SIM117
+                    with gr.Tabs():
+                        # --- API Keys ---
+                        with gr.Tab("🔑 API Keys"):
+                            gr.Markdown("### Codacy API Token")
+                            gr.Markdown(
+                                "Der Token wird **verschlüsselt** in der lokalen Datenbank gespeichert. "
+                                "[Token erstellen](https://app.codacy.com/account/apiTokens)"
+                            )
+
+                            with gr.Row():
+                                api_token_input = gr.Textbox(
+                                    label="Codacy API Token",
+                                    type="password",
+                                    placeholder="Token eingeben...",
+                                    scale=3,
+                                )
+                                save_token_btn = gr.Button("💾 Speichern", variant="primary")
+
+                            token_status = gr.Markdown()
+
+                            gr.Markdown("---")
+                            gr.Markdown("### Token-Status")
+                            token_info = gr.Markdown()
+                            check_token_btn = gr.Button("🔍 Token prüfen")
+
+                        # --- Projekte ---
+                        with gr.Tab("📁 Projekte"):
+                            gr.Markdown("### Projekt hinzufügen")
+
+                            with gr.Row():
+                                new_project_name = gr.Textbox(
+                                    label="Name", placeholder="mein-projekt"
+                                )
+                                new_project_path = gr.Textbox(
+                                    label="Lokaler Pfad", placeholder="/home/user/projekte/..."
+                                )
+
+                            with gr.Row():
+                                new_project_remote = gr.Textbox(
+                                    label="Git Remote", placeholder="git@github.com:user/repo.git"
+                                )
+                                new_project_provider = gr.Dropdown(
+                                    choices=[
+                                        ("GitHub", "gh"),
+                                        ("GitLab", "gl"),
+                                        ("Bitbucket", "bb"),
+                                    ],
+                                    value="gh",
+                                    label="Provider",
+                                )
+                                new_project_org = gr.Textbox(
+                                    label="Organisation", placeholder="username"
+                                )
+
+                            add_project_btn = gr.Button("➕ Projekt hinzufügen", variant="primary")
+                            add_project_status = gr.Markdown()
+
+                            gr.Markdown("---")
+                            gr.Markdown("### Vorhandene Projekte")
+
+                            projects_table = gr.Dataframe(
+                                headers=["ID", "Name", "Pfad", "Provider", "Organisation"],
+                                datatype=["number", "str", "str", "str", "str"],
+                                interactive=False,
+                            )
+
+                            with gr.Row():
+                                delete_project_id = gr.Number(label="Projekt-ID zum Löschen")
+                                delete_project_btn = gr.Button("🗑️ Löschen", variant="stop")
+
+                            delete_project_status = gr.Markdown()
+
+                        # --- Über ---
+                        with gr.Tab("ℹ️ Über"):
+                            gr.Markdown(
+                                """
+                                ### KI-CLI Workspace
+
+                                **Version:** 0.1.0
+
+                                Ein Tool für projektübergreifendes Issue-Management
+                                und KI-Zusammenarbeit.
+
+                                **Features:**
+                                - 📋 Codacy Issues synchronisieren
+                                - 🚫 False Positives verwalten
+                                - 🤝 KI-Session Übergaben
+                                - 🔐 Verschlüsselte API-Key Speicherung
+
+                                **Datenbank:** SQLite mit FTS5 Volltextsuche
+
+                                **Verschlüsselung:** Fernet (AES-128-CBC)
+
+                                ---
+                                [GitHub](https://github.com/goettemar/cindergrace_ki-cli_workspace)
+                                """
+                            )
 
             # === Event Handlers ===
 
@@ -494,10 +590,113 @@ class KIWorkspaceApp:
                 outputs=dashboard_stats,
             )
 
+            # === Settings Event Handlers ===
+
+            def save_api_token(token):
+                if not token or not token.strip():
+                    return "❌ Bitte Token eingeben"
+                self.codacy.set_api_token(token.strip())
+                return "✅ Token gespeichert (verschlüsselt)"
+
+            def check_token_status():
+                token = self.db.get_setting("codacy_api_token")
+                if token:
+                    # Zeige nur die ersten/letzten Zeichen
+                    masked = token[:4] + "..." + token[-4:] if len(token) > 10 else "***"
+                    return f"✅ Token gespeichert: `{masked}`"
+                elif os.environ.get("CODACY_API_TOKEN"):
+                    return "⚠️ Token aus Umgebungsvariable (nicht in DB)"
+                return "❌ Kein Token konfiguriert"
+
+            def load_projects_table():
+                projects = self.db.get_all_projects()
+                return [[p.id, p.name, p.path, p.codacy_provider, p.codacy_org] for p in projects]
+
+            def add_project(name, path, remote, provider, org):
+                if not name or not name.strip():
+                    return "❌ Name ist erforderlich", load_projects_table()
+                try:
+                    project = Project(
+                        name=name.strip(),
+                        path=path.strip() if path else "",
+                        git_remote=remote.strip() if remote else "",
+                        codacy_provider=provider,
+                        codacy_org=org.strip() if org else "",
+                    )
+                    self.db.create_project(project)
+                    return f"✅ Projekt '{name}' hinzugefügt", load_projects_table()
+                except Exception as e:
+                    return f"❌ Fehler: {e}", load_projects_table()
+
+            def delete_project(project_id):
+                if not project_id:
+                    return "❌ Keine Projekt-ID angegeben", load_projects_table()
+                try:
+                    project = self.db.get_project(int(project_id))
+                    if not project:
+                        return "❌ Projekt nicht gefunden", load_projects_table()
+                    self.db.delete_project(int(project_id))
+                    return f"✅ Projekt '{project.name}' gelöscht", load_projects_table()
+                except Exception as e:
+                    return f"❌ Fehler: {e}", load_projects_table()
+
+            def refresh_project_dropdown():
+                return gr.update(choices=self.get_project_choices())
+
+            # Token speichern
+            save_token_btn.click(
+                fn=save_api_token,
+                inputs=[api_token_input],
+                outputs=[token_status],
+            ).then(
+                fn=check_token_status,
+                outputs=[token_info],
+            )
+
+            # Token prüfen
+            check_token_btn.click(
+                fn=check_token_status,
+                outputs=[token_info],
+            )
+
+            # Projekt hinzufügen
+            add_project_btn.click(
+                fn=add_project,
+                inputs=[
+                    new_project_name,
+                    new_project_path,
+                    new_project_remote,
+                    new_project_provider,
+                    new_project_org,
+                ],
+                outputs=[add_project_status, projects_table],
+            ).then(
+                fn=refresh_project_dropdown,
+                outputs=[project_dropdown],
+            )
+
+            # Projekt löschen
+            delete_project_btn.click(
+                fn=delete_project,
+                inputs=[delete_project_id],
+                outputs=[delete_project_status, projects_table],
+            ).then(
+                fn=refresh_project_dropdown,
+                outputs=[project_dropdown],
+            )
+
             # Initial load
             app.load(
                 fn=lambda: self.get_stats(None),
                 outputs=dashboard_stats,
+            )
+            app.load(
+                fn=check_token_status,
+                outputs=token_info,
+            )
+            app.load(
+                fn=load_projects_table,
+                outputs=projects_table,
             )
 
         return app

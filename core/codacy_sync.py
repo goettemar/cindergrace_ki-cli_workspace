@@ -25,16 +25,54 @@ CODACY_API_BASE = "https://app.codacy.com/api/v3"
 class CodacySync:
     """Synchronisiert Issues von Codacy REST API in die lokale Datenbank."""
 
-    def __init__(self, api_token: str | None = None):
+    def __init__(self, api_token: str | None = None, db: DatabaseManager | None = None):
         """
         Initialisiert den Sync-Client.
 
         Args:
-            api_token: Codacy API Token (oder aus CODACY_API_TOKEN env)
+            api_token: Codacy API Token (oder aus DB/CODACY_API_TOKEN env)
+            db: DatabaseManager für Token-Lookup
         """
-        self.api_token = api_token or os.environ.get("CODACY_API_TOKEN")
-        if not self.api_token:
+        self._db = db
+        self._api_token = api_token
+        self._token_loaded = False
+
+    @property
+    def api_token(self) -> str | None:
+        """Lädt den API-Token (lazy, mit Caching)."""
+        if self._api_token:
+            return self._api_token
+
+        if not self._token_loaded:
+            self._token_loaded = True
+            # 1. Aus Datenbank (verschlüsselt)
+            if self._db:
+                db_token = self._db.get_setting("codacy_api_token")
+                if db_token:
+                    self._api_token = db_token
+                    return self._api_token
+
+            # 2. Aus Umgebungsvariable
+            env_token = os.environ.get("CODACY_API_TOKEN")
+            if env_token:
+                self._api_token = env_token
+                return self._api_token
+
             logger.warning("Kein CODACY_API_TOKEN gesetzt")
+
+        return self._api_token
+
+    def set_api_token(self, token: str) -> None:
+        """Setzt den API-Token (und speichert in DB wenn verfügbar)."""
+        self._api_token = token
+        self._token_loaded = True
+        if self._db and token:
+            self._db.set_setting(
+                "codacy_api_token",
+                token,
+                encrypt=True,
+                description="Codacy API Token für Issue-Sync",
+            )
 
     def _headers(self) -> dict[str, str]:
         """Gibt die API-Header zurück."""
