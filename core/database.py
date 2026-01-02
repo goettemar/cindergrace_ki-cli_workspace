@@ -532,9 +532,7 @@ class DatabaseManager:
                     (project_id,),
                 )
             else:
-                cursor = conn.execute(
-                    "SELECT * FROM handoffs ORDER BY created_at DESC LIMIT 1"
-                )
+                cursor = conn.execute("SELECT * FROM handoffs ORDER BY created_at DESC LIMIT 1")
             row = cursor.fetchone()
             if row:
                 data = dict(row)

@@ -5,12 +5,10 @@ Gradio-basierte GUI für Issue-Management und KI-Zusammenarbeit.
 """
 
 import logging
-from datetime import datetime
-from pathlib import Path
 
 import gradio as gr
 
-from core.database import DatabaseManager, Issue, Project
+from core.database import DatabaseManager, Project
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -109,16 +107,18 @@ class KIWorkspaceApp:
 
             fp_marker = "✓ FP" if issue.is_false_positive else ""
 
-            rows.append([
-                issue.id,
-                priority_emoji,
-                issue.priority or "",
-                issue.scan_type or "",
-                issue.title[:60] + "..." if len(issue.title or "") > 60 else issue.title,
-                f"{issue.file_path}:{issue.line_number}" if issue.file_path else "",
-                issue.tool or "",
-                fp_marker,
-            ])
+            rows.append(
+                [
+                    issue.id,
+                    priority_emoji,
+                    issue.priority or "",
+                    issue.scan_type or "",
+                    issue.title[:60] + "..." if len(issue.title or "") > 60 else issue.title,
+                    f"{issue.file_path}:{issue.line_number}" if issue.file_path else "",
+                    issue.tool or "",
+                    fp_marker,
+                ]
+            )
 
         return rows
 
@@ -137,7 +137,13 @@ class KIWorkspaceApp:
             cursor = conn.execute("SELECT * FROM issue_meta WHERE id = ?", (issue_id,))
             row = cursor.fetchone()
             if not row:
-                return {"title": "Issue nicht gefunden", "message": "", "file_info": "", "tool_info": "", "fp_info": ""}
+                return {
+                    "title": "Issue nicht gefunden",
+                    "message": "",
+                    "file_info": "",
+                    "tool_info": "",
+                    "fp_info": "",
+                }
 
             issue = dict(row)
 
@@ -153,7 +159,9 @@ class KIWorkspaceApp:
             "file_info": f"Datei: {issue.get('file_path', '-')}:{issue.get('line_number', '')}",
             "tool_info": f"Tool: {issue.get('tool', '-')} | Rule: {issue.get('rule', '-')} | Category: {issue.get('category', '-')}",
             "fp_info": fp_info,
-            "cve_info": f"CVE: {issue.get('cve', '-')} | Affected: {issue.get('affected_version', '-')} | Fixed in: {issue.get('fixed_version', '-')}" if issue.get("cve") else "",
+            "cve_info": f"CVE: {issue.get('cve', '-')} | Affected: {issue.get('affected_version', '-')} | Fixed in: {issue.get('fixed_version', '-')}"
+            if issue.get("cve")
+            else "",
         }
 
     def mark_as_false_positive(self, issue_id: int | None, reason: str) -> str:
@@ -176,7 +184,12 @@ class KIWorkspaceApp:
             "**Nach Priorität:**",
         ]
 
-        for prio, count in sorted(stats["by_priority"].items(), key=lambda x: ["Critical", "High", "Medium", "Low"].index(x[0]) if x[0] in ["Critical", "High", "Medium", "Low"] else 99):
+        for prio, count in sorted(
+            stats["by_priority"].items(),
+            key=lambda x: ["Critical", "High", "Medium", "Low"].index(x[0])
+            if x[0] in ["Critical", "High", "Medium", "Low"]
+            else 99,
+        ):
             emoji = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}.get(prio, "⚪")
             lines.append(f"  {emoji} {prio}: {count}")
 
@@ -184,10 +197,12 @@ class KIWorkspaceApp:
         for stype, count in sorted(stats["by_scan_type"].items()):
             lines.append(f"  • {stype}: {count}")
 
-        lines.extend([
-            "",
-            f"**False Positives:** {stats['false_positives']}",
-        ])
+        lines.extend(
+            [
+                "",
+                f"**False Positives:** {stats['false_positives']}",
+            ]
+        )
 
         return "\n".join(lines)
 
@@ -262,18 +277,24 @@ class KIWorkspaceApp:
                             detail_message = gr.Textbox(label="Meldung", interactive=False, lines=3)
                             detail_file = gr.Textbox(label="Datei", interactive=False)
                             detail_tool = gr.Textbox(label="Tool/Rule", interactive=False)
-                            detail_cve = gr.Textbox(label="CVE Info", interactive=False, visible=True)
+                            detail_cve = gr.Textbox(
+                                label="CVE Info", interactive=False, visible=True
+                            )
                             detail_fp = gr.Textbox(label="False Positive Status", interactive=False)
 
                         with gr.Column(scale=1):
                             gr.Markdown("### Aktionen")
-                            selected_issue_id = gr.Number(label="Ausgewählte Issue ID", visible=True)
+                            selected_issue_id = gr.Number(
+                                label="Ausgewählte Issue ID", visible=True
+                            )
                             fp_reason = gr.Textbox(
                                 label="False Positive Begründung",
                                 placeholder="z.B.: Whitelist-Pattern, nur Test-Code...",
                                 lines=3,
                             )
-                            mark_fp_btn = gr.Button("✅ Als False Positive markieren", variant="primary")
+                            mark_fp_btn = gr.Button(
+                                "✅ Als False Positive markieren", variant="primary"
+                            )
                             fp_result = gr.Textbox(label="Ergebnis", interactive=False)
 
                 # === Statistiken Tab ===
@@ -284,7 +305,8 @@ class KIWorkspaceApp:
                 # === False Positives Tab ===
                 with gr.Tab("🚫 False Positives"):
                     gr.Markdown("### Alle False Positives")
-                    fp_table = gr.Dataframe(
+                    gr.Markdown("*Kommt in Phase 2 - Übersicht aller FPs mit Sync-Status*")
+                    gr.Dataframe(
                         headers=["ID", "Projekt", "Titel", "Begründung", "Markiert am"],
                         datatype=["number", "str", "str", "str", "str"],
                         interactive=False,
@@ -318,7 +340,14 @@ class KIWorkspaceApp:
                 return None, "", "", "", "", "", ""
 
             # Filter-Updates
-            filter_inputs = [project_dropdown, priority_filter, status_filter, scan_type_filter, search_box, show_fps]
+            filter_inputs = [
+                project_dropdown,
+                priority_filter,
+                status_filter,
+                scan_type_filter,
+                search_box,
+                show_fps,
+            ]
             for inp in filter_inputs:
                 inp.change(
                     fn=update_issues,
@@ -330,7 +359,15 @@ class KIWorkspaceApp:
             issues_table.select(
                 fn=on_issue_select,
                 inputs=[issues_table],
-                outputs=[selected_issue_id, detail_title, detail_message, detail_file, detail_tool, detail_cve, detail_fp],
+                outputs=[
+                    selected_issue_id,
+                    detail_title,
+                    detail_message,
+                    detail_file,
+                    detail_tool,
+                    detail_cve,
+                    detail_fp,
+                ],
             )
 
             # False Positive markieren

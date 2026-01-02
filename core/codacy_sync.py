@@ -46,9 +46,7 @@ class CodacySync:
         logger.error("Unerwartetes Format der Codacy-Antwort: %r", type(payload))
         return []
 
-    def mark_ignored(
-        self, provider: str, org: str, repo: str, issue_id: str, reason: str
-    ) -> bool:
+    def mark_ignored(self, provider: str, org: str, repo: str, issue_id: str, reason: str) -> bool:
         """Markiert ein Codacy-Issue als ignoriert und gibt Erfolg zurueck."""
         url = (
             "https://app.codacy.com/api/v3/analysis/organizations/"
