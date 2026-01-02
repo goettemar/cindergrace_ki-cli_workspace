@@ -373,27 +373,30 @@ class KIWorkspaceApp:
                     with gr.Tabs():
                         # --- API Keys ---
                         with gr.Tab("🔑 API Keys"):
-                            gr.Markdown("### Codacy API Token")
+                            gr.Markdown("## Codacy API Token")
                             gr.Markdown(
                                 "Der Token wird **verschlüsselt** in der lokalen Datenbank gespeichert. "
-                                "[Token erstellen](https://app.codacy.com/account/apiTokens)"
+                                "[→ Token erstellen](https://app.codacy.com/account/apiTokens)"
                             )
 
+                            # Token Status prominent anzeigen
+                            token_status_box = gr.Markdown(
+                                elem_classes=["token-status-box"],
+                            )
+
+                            gr.Markdown("### Neuen Token eingeben")
                             with gr.Row():
                                 api_token_input = gr.Textbox(
-                                    label="Codacy API Token",
+                                    label="Token",
                                     type="password",
-                                    placeholder="Token eingeben...",
-                                    scale=3,
+                                    placeholder="Neuen Token hier eingeben um zu ersetzen...",
+                                    scale=4,
                                 )
-                                save_token_btn = gr.Button("💾 Speichern", variant="primary")
+                                save_token_btn = gr.Button(
+                                    "💾 Speichern", variant="primary", scale=1
+                                )
 
-                            token_status = gr.Markdown()
-
-                            gr.Markdown("---")
-                            gr.Markdown("### Token-Status")
-                            token_info = gr.Markdown()
-                            check_token_btn = gr.Button("🔍 Token prüfen")
+                            token_save_result = gr.Markdown()
 
                         # --- Projekte ---
                         with gr.Tab("📁 Projekte"):
@@ -594,19 +597,30 @@ class KIWorkspaceApp:
 
             def save_api_token(token):
                 if not token or not token.strip():
-                    return "❌ Bitte Token eingeben"
+                    return "❌ Bitte Token eingeben", get_token_status_display()
                 self.codacy.set_api_token(token.strip())
-                return "✅ Token gespeichert (verschlüsselt)"
+                return "✅ Token gespeichert!", get_token_status_display()
 
-            def check_token_status():
+            def get_token_status_display():
+                """Gibt formatierten Token-Status zurück."""
                 token = self.db.get_setting("codacy_api_token")
                 if token:
-                    # Zeige nur die ersten/letzten Zeichen
                     masked = token[:4] + "..." + token[-4:] if len(token) > 10 else "***"
-                    return f"✅ Token gespeichert: `{masked}`"
+                    return (
+                        f"### ✅ Token konfiguriert\n\n"
+                        f"**Gespeicherter Token:** `{masked}`\n\n"
+                        f"*Der Token ist verschlüsselt in der Datenbank gespeichert.*"
+                    )
                 elif os.environ.get("CODACY_API_TOKEN"):
-                    return "⚠️ Token aus Umgebungsvariable (nicht in DB)"
-                return "❌ Kein Token konfiguriert"
+                    return (
+                        "### ⚠️ Token aus Umgebungsvariable\n\n"
+                        "Der Token wird aus `CODACY_API_TOKEN` geladen.\n\n"
+                        "*Speichere ihn in der DB für mehr Sicherheit.*"
+                    )
+                return (
+                    "### ❌ Kein Token konfiguriert\n\n"
+                    "Bitte gib unten einen Codacy API Token ein."
+                )
 
             def load_projects_table():
                 projects = self.db.get_all_projects()
@@ -647,16 +661,7 @@ class KIWorkspaceApp:
             save_token_btn.click(
                 fn=save_api_token,
                 inputs=[api_token_input],
-                outputs=[token_status],
-            ).then(
-                fn=check_token_status,
-                outputs=[token_info],
-            )
-
-            # Token prüfen
-            check_token_btn.click(
-                fn=check_token_status,
-                outputs=[token_info],
+                outputs=[token_save_result, token_status_box],
             )
 
             # Projekt hinzufügen
@@ -685,18 +690,17 @@ class KIWorkspaceApp:
                 outputs=[project_dropdown],
             )
 
-            # Initial load
+            # Initial load - alle in einem
+            def initial_load():
+                return (
+                    self.get_stats(None),
+                    get_token_status_display(),
+                    load_projects_table(),
+                )
+
             app.load(
-                fn=lambda: self.get_stats(None),
-                outputs=dashboard_stats,
-            )
-            app.load(
-                fn=check_token_status,
-                outputs=token_info,
-            )
-            app.load(
-                fn=load_projects_table,
-                outputs=projects_table,
+                fn=initial_load,
+                outputs=[dashboard_stats, token_status_box, projects_table],
             )
 
         return app
