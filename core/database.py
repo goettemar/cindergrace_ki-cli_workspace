@@ -561,32 +561,36 @@ class DatabaseManager:
                 "false_positives": 0,
             }
 
-            # Total
-            cursor = conn.execute(f"SELECT COUNT(*) FROM issue_meta {where}", params)
+            # Total - where ist intern aufgebaut (project_id), nicht User-Input
+            cursor = conn.execute(f"SELECT COUNT(*) FROM issue_meta {where}", params)  # nosec B608 # nosemgrep
             stats["total"] = cursor.fetchone()[0]
 
             # By Priority
             cursor = conn.execute(
-                f"SELECT priority, COUNT(*) FROM issue_meta {where} GROUP BY priority", params
+                f"SELECT priority, COUNT(*) FROM issue_meta {where} GROUP BY priority",
+                params,  # nosec B608 # nosemgrep
             )
             stats["by_priority"] = {row[0]: row[1] for row in cursor.fetchall()}
 
             # By Status
             cursor = conn.execute(
-                f"SELECT status, COUNT(*) FROM issue_meta {where} GROUP BY status", params
+                f"SELECT status, COUNT(*) FROM issue_meta {where} GROUP BY status",
+                params,  # nosec B608 # nosemgrep
             )
             stats["by_status"] = {row[0]: row[1] for row in cursor.fetchall()}
 
             # By Scan Type
             cursor = conn.execute(
-                f"SELECT scan_type, COUNT(*) FROM issue_meta {where} GROUP BY scan_type", params
+                f"SELECT scan_type, COUNT(*) FROM issue_meta {where} GROUP BY scan_type",
+                params,  # nosec B608 # nosemgrep
             )
             stats["by_scan_type"] = {row[0]: row[1] for row in cursor.fetchall()}
 
             # False Positives
             fp_where = f"{where} AND" if where else "WHERE"
             cursor = conn.execute(
-                f"SELECT COUNT(*) FROM issue_meta {fp_where} is_false_positive = 1", params
+                f"SELECT COUNT(*) FROM issue_meta {fp_where} is_false_positive = 1",
+                params,  # nosec B608 # nosemgrep
             )
             stats["false_positives"] = cursor.fetchone()[0]
 

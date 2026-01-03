@@ -433,7 +433,7 @@ class KIWorkspaceApp:
                         check_btn = gr.Button("🔍 Check ausführen", variant="primary")
 
                     check_output = gr.Dataframe(
-                        headers=["Status", "Check", "Ergebnis", "Severity"],
+                        headers=["Status", "Check", "Ergebnis", "Wichtigkeit"],
                         datatype=["str", "str", "str", "str"],
                         interactive=False,
                         label="Check-Ergebnisse",
@@ -454,12 +454,20 @@ class KIWorkspaceApp:
 
                         results = run_all_checks(self.db, project)
 
+                        # Severity-Badges mit Farben
+                        severity_badges = {
+                            "error": "🔴 Blocker",
+                            "warning": "🟡 Empfohlen",
+                            "info": "⚪ Info",
+                        }
+
                         rows = []
                         for r in results:
                             icon = "✅" if r.passed else "❌"
                             if not r.passed and r.severity == "warning":
                                 icon = "⚠️"
-                            rows.append([icon, r.name, r.message, r.severity])
+                            badge = severity_badges.get(r.severity, r.severity)
+                            rows.append([icon, r.name, r.message, badge])
 
                         passed = sum(1 for r in results if r.passed)
                         total = len(results)
