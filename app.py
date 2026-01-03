@@ -346,7 +346,9 @@ class KIWorkspaceApp:
                             detail_cve = gr.Textbox(
                                 label="CVE Info", interactive=False, visible=True
                             )
-                            detail_fp = gr.Textbox(label="False Positive Status", interactive=False)
+                            detail_fp = gr.Textbox(
+                                label="False Positive Status", interactive=False, lines=4
+                            )
 
                         with gr.Column(scale=1):
                             gr.Markdown("### Aktionen")
@@ -420,6 +422,58 @@ class KIWorkspaceApp:
                         label="Ausgabe",
                         language=None,
                         lines=10,
+                    )
+
+                # === Release Check Tab ===
+                with gr.Tab("✅ Release Check"):
+                    gr.Markdown("### Release Readiness Check")
+                    gr.Markdown("Prüft ob ein Projekt bereit für Release/Publikation ist.")
+
+                    with gr.Row():
+                        check_btn = gr.Button("🔍 Check ausführen", variant="primary")
+
+                    check_output = gr.Dataframe(
+                        headers=["Status", "Check", "Ergebnis", "Severity"],
+                        datatype=["str", "str", "str", "str"],
+                        interactive=False,
+                        label="Check-Ergebnisse",
+                    )
+
+                    check_summary = gr.Markdown("")
+
+                    def run_release_check(project_id: int | None):
+                        """Führt Release Check für das Projekt aus."""
+                        if not project_id:
+                            return [], "❌ Kein Projekt ausgewählt"
+
+                        from core.checks import run_all_checks
+
+                        project = self.db.get_project(project_id)
+                        if not project:
+                            return [], "❌ Projekt nicht gefunden"
+
+                        results = run_all_checks(self.db, project)
+
+                        rows = []
+                        for r in results:
+                            icon = "✅" if r.passed else "❌"
+                            if not r.passed and r.severity == "warning":
+                                icon = "⚠️"
+                            rows.append([icon, r.name, r.message, r.severity])
+
+                        passed = sum(1 for r in results if r.passed)
+                        total = len(results)
+                        status = "READY" if passed == total else "NOT READY"
+                        color = "green" if passed == total else "red"
+
+                        summary = f"### Status: **{passed}/{total}** Checks bestanden - <span style='color:{color}'>{status}</span>"
+
+                        return rows, summary
+
+                    check_btn.click(
+                        fn=run_release_check,
+                        inputs=[project_dropdown],
+                        outputs=[check_output, check_summary],
                     )
 
                 # === KI-Übergaben Tab ===

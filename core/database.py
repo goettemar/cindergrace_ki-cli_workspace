@@ -423,15 +423,16 @@ class DatabaseManager:
                     )
                 issue.id = existing["id"]
             else:
-                # Insert
+                # Insert - inkl. FP-Felder für Codacy Ignored Items
                 cursor = conn.execute(
                     """
                     INSERT INTO issue_meta (
                         project_id, external_id, priority, status, scan_type,
                         title, message, file_path, line_number, tool, rule,
                         category, cve, affected_version, fixed_version,
+                        is_false_positive, fp_reason,
                         created_at, synced_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         issue.project_id,
@@ -449,6 +450,8 @@ class DatabaseManager:
                         issue.cve,
                         issue.affected_version,
                         issue.fixed_version,
+                        1 if issue.is_false_positive else 0,
+                        issue.fp_reason,
                         now,
                         now,
                     ),

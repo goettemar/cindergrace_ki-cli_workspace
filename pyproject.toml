@@ -12,7 +12,12 @@ dependencies = [
     "gradio>=5.31.0",
     "requests>=2.32.0",
     "cryptography>=44.0.0",
+    "typer>=0.15.0",
+    "rich>=13.0.0",
 ]
+
+[project.scripts]
+ki-workspace = "core.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["core*", "addons*"]
@@ -23,6 +28,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "ruff>=0.8.0",
+    "radon>=6.0.0",
 ]
 
 [tool.ruff]

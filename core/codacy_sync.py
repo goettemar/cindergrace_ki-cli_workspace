@@ -202,12 +202,9 @@ class CodacySync:
         Returns:
             Liste der SRM Items
         """
-        # Codacy SRM API endpoint (POST mit search)
-        url = (
-            f"{CODACY_API_BASE}/analysis/organizations/{provider}/{org}"
-            f"/repositories/{repo}/srm/items/search"
-        )
-        body = {}
+        # Codacy SRM API endpoint - Organisations-Ebene mit Repository-Filter
+        url = f"{CODACY_API_BASE}/organizations/{provider}/{org}/security/items/search"
+        body = {"repositories": [repo]}
         if statuses:
             body["statuses"] = statuses
 
@@ -304,7 +301,19 @@ class CodacySync:
             )
             for item in srm_items:
                 codacy_status = item.get("status", "")
-                is_ignored = codacy_status == "Ignored"
+                # Prüfe ignored-Objekt (nicht nur Status), enthält Reason
+                ignored_info = item.get("ignored")
+                is_ignored = ignored_info is not None
+
+                # Nur offene Issues ODER explizit ignorierte (False Positives) importieren
+                # Geschlossene Issues ohne ignored-Flag überspringen
+                is_closed = codacy_status in ("ClosedOnTime", "ClosedLate")
+                if is_closed and not is_ignored:
+                    continue
+
+                fp_reason = None
+                if is_ignored:
+                    fp_reason = ignored_info.get("reason", "Von Codacy als Ignored markiert")
 
                 issue = Issue(
                     project_id=project.id,
@@ -317,7 +326,7 @@ class CodacySync:
                     category=item.get("securityCategory", ""),
                     created_at=self._parse_date(item.get("openedAt")),
                     is_false_positive=is_ignored,
-                    fp_reason="Von Codacy als Ignored markiert" if is_ignored else None,
+                    fp_reason=fp_reason,
                 )
                 db.upsert_issue(issue)
                 stats["srm"] += 1
