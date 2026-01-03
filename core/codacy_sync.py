@@ -305,12 +305,7 @@ class CodacySync:
                 ignored_info = item.get("ignored")
                 is_ignored = ignored_info is not None
 
-                # Nur offene Issues ODER explizit ignorierte (False Positives) importieren
-                # Geschlossene Issues ohne ignored-Flag überspringen
-                is_closed = codacy_status in ("ClosedOnTime", "ClosedLate")
-                if is_closed and not is_ignored:
-                    continue
-
+                # Geschlossene Issues werden auch verarbeitet, um lokalen Status zu aktualisieren
                 fp_reason = None
                 if is_ignored:
                     fp_reason = ignored_info.get("reason", "Von Codacy als Ignored markiert")
@@ -318,6 +313,7 @@ class CodacySync:
                 issue = Issue(
                     project_id=project.id,
                     external_id=item.get("id", ""),
+                    codacy_result_id=item.get("itemSourceId", ""),  # Für API-Aufrufe
                     priority=item.get("priority", "Medium"),
                     status=status_map.get(codacy_status, "open"),
                     scan_type=item.get("scanType", "SAST"),
@@ -367,40 +363,6 @@ class CodacySync:
 
         stats["synced"] = stats["srm"] + stats["quality"]
         return stats
-
-    def mark_ignored_in_codacy(
-        self, provider: str, org: str, repo: str, result_data_id: str, reason: str
-    ) -> bool:
-        """
-        Markiert ein Issue in Codacy als ignoriert.
-
-        Args:
-            provider: Git Provider
-            org: Organisation
-            repo: Repository
-            result_data_id: Codacy Result Data ID
-            reason: Begründung
-
-        Returns:
-            True bei Erfolg
-        """
-        url = (
-            f"{CODACY_API_BASE}/analysis/organizations/{provider}/{org}"
-            f"/repositories/{repo}/issues/{result_data_id}"
-        )
-
-        try:
-            response = requests.patch(
-                url,
-                headers=self._headers(),
-                json={"status": "Ignored", "reason": reason},
-                timeout=30,
-            )
-            response.raise_for_status()
-            return True
-        except requests.RequestException as e:
-            logger.error(f"Fehler beim Ignorieren: {e}")
-            return False
 
     def _parse_date(self, date_str: str | None) -> datetime | None:
         """Parst ein ISO-Datum."""

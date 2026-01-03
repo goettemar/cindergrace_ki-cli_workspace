@@ -101,8 +101,10 @@ def check_changelog(project_path: str) -> CheckResult:
 
 
 def check_critical_issues(db: DatabaseManager, project_id: int) -> CheckResult:
-    """Prueft ob es Critical Issues gibt."""
-    issues = db.get_issues(project_id=project_id, priority="Critical", is_false_positive=False)
+    """Prueft ob es offene Critical Issues gibt."""
+    issues = db.get_issues(
+        project_id=project_id, priority="Critical", status="open", is_false_positive=False
+    )
     count = len(issues)
 
     if count == 0:
@@ -122,8 +124,10 @@ def check_critical_issues(db: DatabaseManager, project_id: int) -> CheckResult:
 
 
 def check_high_issues(db: DatabaseManager, project_id: int) -> CheckResult:
-    """Prueft ob es High Issues gibt."""
-    issues = db.get_issues(project_id=project_id, priority="High", is_false_positive=False)
+    """Prueft ob es offene High Issues gibt."""
+    issues = db.get_issues(
+        project_id=project_id, priority="High", status="open", is_false_positive=False
+    )
     count = len(issues)
 
     if count == 0:

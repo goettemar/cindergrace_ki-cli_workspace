@@ -35,7 +35,8 @@ class Issue:
 
     id: int | None = None
     project_id: int = 0
-    external_id: str = ""  # Codacy ID
+    external_id: str = ""  # Codacy ID (UUID)
+    codacy_result_id: str = ""  # Codacy itemSourceId für API-Aufrufe
     priority: str = ""  # Critical, High, Medium, Low
     status: str = "open"  # open, ignored, fixed
     scan_type: str = ""  # SAST, SCA, IaC, Secrets, CICD
@@ -177,6 +178,7 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id INTEGER NOT NULL,
                     external_id TEXT UNIQUE NOT NULL,
+                    codacy_result_id TEXT,
                     priority TEXT,
                     status TEXT DEFAULT 'open',
                     scan_type TEXT,
@@ -242,6 +244,10 @@ class DatabaseManager:
                     VALUES (new.id, new.title, new.message, new.file_path, new.tool, new.rule, new.category, new.fp_reason, new.notes);
                 END
             """)
+
+            # Migration: codacy_result_id hinzufügen falls nicht vorhanden
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE issue_meta ADD COLUMN codacy_result_id TEXT")
 
             # Handoffs
             conn.execute("""
@@ -366,6 +372,7 @@ class DatabaseManager:
                     conn.execute(
                         """
                         UPDATE issue_meta SET
+                            codacy_result_id = COALESCE(?, codacy_result_id),
                             priority = ?, status = ?, scan_type = ?, title = ?,
                             message = ?, file_path = ?, line_number = ?, tool = ?,
                             rule = ?, category = ?, cve = ?, affected_version = ?,
@@ -374,6 +381,7 @@ class DatabaseManager:
                         WHERE external_id = ?
                         """,
                         (
+                            issue.codacy_result_id,
                             issue.priority,
                             issue.status,
                             issue.scan_type,
@@ -397,6 +405,7 @@ class DatabaseManager:
                     conn.execute(
                         """
                         UPDATE issue_meta SET
+                            codacy_result_id = COALESCE(?, codacy_result_id),
                             priority = ?, status = ?, scan_type = ?, title = ?,
                             message = ?, file_path = ?, line_number = ?, tool = ?,
                             rule = ?, category = ?, cve = ?, affected_version = ?,
@@ -404,6 +413,7 @@ class DatabaseManager:
                         WHERE external_id = ?
                         """,
                         (
+                            issue.codacy_result_id,
                             issue.priority,
                             issue.status,
                             issue.scan_type,
@@ -427,16 +437,18 @@ class DatabaseManager:
                 cursor = conn.execute(
                     """
                     INSERT INTO issue_meta (
-                        project_id, external_id, priority, status, scan_type,
+                        project_id, external_id, codacy_result_id,
+                        priority, status, scan_type,
                         title, message, file_path, line_number, tool, rule,
                         category, cve, affected_version, fixed_version,
                         is_false_positive, fp_reason,
                         created_at, synced_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         issue.project_id,
                         issue.external_id,
+                        issue.codacy_result_id,
                         issue.priority,
                         issue.status,
                         issue.scan_type,

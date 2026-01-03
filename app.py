@@ -108,6 +108,16 @@ class KIWorkspaceApp:
             search=search,
         )
 
+        # Sortierung: open zuerst, dann nach Priority
+        status_order = {"open": 0, "fixed": 1, "ignored": 2}
+        priority_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+        issues.sort(
+            key=lambda i: (
+                status_order.get(i.status, 9),
+                priority_order.get(i.priority, 9),
+            )
+        )
+
         # Für Tabelle formatieren
         rows = []
         for issue in issues:
