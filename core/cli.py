@@ -190,6 +190,11 @@ def issues(
                 "rule": i.rule,
                 "category": i.category,
                 "is_false_positive": i.is_false_positive,
+                # KI-Empfehlungsfelder (wichtig: wenn gesetzt, nicht erneut bewerten!)
+                "ki_recommendation_category": i.ki_recommendation_category,
+                "ki_recommendation": i.ki_recommendation,
+                "ki_reviewed_by": i.ki_reviewed_by,
+                "ki_reviewed_at": str(i.ki_reviewed_at) if i.ki_reviewed_at else None,
             }
             for i in all_issues
         ]
@@ -400,6 +405,285 @@ def add_license(
 
     shutil.copy(template_path, license_path)
     console.print(f"[green]LICENSE hinzugefuegt:[/green] {license_path}")
+
+
+# =============================================================================
+# KI-INFO (Prozessübersicht für KIs)
+# =============================================================================
+
+
+KI_WORKFLOW_INFO = """
+# KI-CLI Workspace - Workflow für KIs
+
+## Wichtigste Regel
+**Der lokale Status zieht zuerst!** Wenn ein Issue bereits eine KI-Empfehlung hat
+(ki_recommendation gesetzt), NICHT erneut bewerten. Der User hat es evtl. nur
+noch nicht in Codacy markiert.
+
+## Verfügbare Befehle
+
+### Issues abfragen
+```bash
+ki-workspace issues <PROJECT> --json     # Alle offenen Issues
+ki-workspace issues <PROJECT> --critical # Nur Critical
+ki-workspace issues <PROJECT> --high     # Nur High
+```
+
+### Issue zum Ignorieren empfehlen
+```bash
+ki-workspace recommend-ignore <ISSUE_ID> \\
+    --category <KATEGORIE> \\
+    --reason "Begründung" \\
+    --reviewer <KI_NAME>
+```
+
+**Kategorien:**
+- `accepted_use` - Bewusst so implementiert
+- `false_positive` - Tool-Fehlalarm
+- `not_exploitable` - Theoretisch verwundbar, praktisch nicht
+- `test_code` - Nur in Tests
+- `external_code` - Fremdcode/Vendor
+
+**Reviewer:** `claude`, `codex`, `gemini`
+
+### Ausstehende Empfehlungen prüfen
+```bash
+ki-workspace pending-ignores [PROJECT]   # Was noch markiert werden muss
+```
+
+### Projekt-Status
+```bash
+ki-workspace status <PROJECT>            # Übersicht mit Issue-Statistiken
+ki-workspace check <PROJECT>             # Release Readiness Check
+ki-workspace sync <PROJECT>              # Von Codacy synchronisieren
+```
+
+## Workflow für Issue-Review
+
+1. **Issues laden:** `ki-workspace issues <PROJECT> --json`
+2. **Prüfen:** Hat Issue bereits `ki_recommendation`? → SKIP
+3. **Analysieren:** Code-Kontext prüfen, ist es ein echtes Problem?
+4. **Empfehlen:** `ki-workspace recommend-ignore <ID> --category ... --reason "..."`
+5. **User informieren:** "Bitte in Codacy als Ignored markieren"
+
+## Beispiel
+
+```bash
+# Critical Issues eines Projekts anzeigen
+ki-workspace issues cindergrace-comfyui-runpod --critical --json
+
+# SQL-Injection als False Positive markieren (parameterisierte Query)
+ki-workspace recommend-ignore 42 \\
+    --category false_positive \\
+    --reason "Query ist parameterisiert, Parameter werden nicht in SQL eingebettet" \\
+    --reviewer claude
+
+# Prüfen was noch offen ist
+ki-workspace pending-ignores cindergrace-comfyui-runpod
+```
+
+## Wichtig für den User
+
+Nach KI-Empfehlungen muss der User manuell in Codacy:
+1. Issue öffnen
+2. "Ignore" klicken
+3. Kategorie wählen (wie von KI empfohlen)
+4. Kommentar einfügen (KI-Begründung)
+5. Speichern
+
+Beim nächsten Sync wird der FP-Status automatisch übernommen.
+"""
+
+
+@app.command("ki-info")
+def ki_info(
+    markdown: bool = typer.Option(False, "--md", help="Als Markdown ausgeben"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Als JSON"),
+):
+    """Zeigt Workflow-Infos für KIs an. IMMER ZUERST LESEN!"""
+    if json_output:
+        data = {
+            "commands": {
+                "issues": "ki-workspace issues <PROJECT> [--critical|--high] [--json]",
+                "recommend-ignore": "ki-workspace recommend-ignore <ID> -c <CATEGORY> -r <REASON>",
+                "pending-ignores": "ki-workspace pending-ignores [PROJECT]",
+                "status": "ki-workspace status <PROJECT>",
+                "check": "ki-workspace check <PROJECT>",
+                "sync": "ki-workspace sync <PROJECT>",
+            },
+            "categories": list(IGNORE_CATEGORIES.keys()),
+            "reviewers": ["claude", "codex", "gemini"],
+            "important": "Lokaler Status zieht zuerst! Nicht erneut bewerten wenn ki_recommendation bereits gesetzt.",
+        }
+        console.print_json(json.dumps(data))
+        return
+
+    if markdown:
+        console.print(KI_WORKFLOW_INFO)
+    else:
+        # Farbige Ausgabe für Terminal
+        console.print("[bold cyan]KI-CLI Workspace - Workflow für KIs[/bold cyan]\n")
+        console.print("[bold red]WICHTIG:[/bold red] Lokaler Status zieht zuerst!")
+        console.print("Wenn ki_recommendation bereits gesetzt → NICHT erneut bewerten!\n")
+
+        console.print("[bold]Verfügbare Befehle:[/bold]")
+        console.print("  issues <PROJECT> [--critical|--high] [--json]")
+        console.print("  recommend-ignore <ID> -c <CATEGORY> -r <REASON> --reviewer <KI>")
+        console.print("  pending-ignores [PROJECT]")
+        console.print("  status <PROJECT>")
+        console.print("  check <PROJECT>")
+        console.print("  sync <PROJECT>\n")
+
+        console.print("[bold]Kategorien für recommend-ignore:[/bold]")
+        for key, label in IGNORE_CATEGORIES.items():
+            console.print(f"  [cyan]{key}[/cyan] - {label}")
+
+        console.print("\n[dim]Für ausführliche Doku: ki-workspace ki-info --md[/dim]")
+
+
+# =============================================================================
+# RECOMMEND-IGNORE (KI-Empfehlung)
+# =============================================================================
+
+
+# Gültige Kategorien (entsprechen Codacy UI)
+IGNORE_CATEGORIES = {
+    "accepted_use": "Accepted use",
+    "false_positive": "False positive",
+    "not_exploitable": "Not exploitable",
+    "test_code": "Test code",
+    "external_code": "External code",
+}
+
+
+@app.command("recommend-ignore")
+def recommend_ignore(
+    issue_id: int = typer.Argument(..., help="Issue ID"),
+    category: str = typer.Option(
+        ...,
+        "--category",
+        "-c",
+        help="Kategorie: accepted_use, false_positive, not_exploitable, test_code, external_code",
+    ),
+    reason: str = typer.Option(..., "--reason", "-r", help="Begruendung"),
+    reviewer: str = typer.Option("claude", "--reviewer", help="KI-Name (claude, codex, gemini)"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="JSON Output"),
+):
+    """KI empfiehlt ein Issue zum Ignorieren. User setzt dann manuell in Codacy."""
+    db = get_db()
+
+    if category not in IGNORE_CATEGORIES:
+        err_console.print(f"[red]Ungueltige Kategorie: {category}[/red]")
+        err_console.print(f"Erlaubt: {', '.join(IGNORE_CATEGORIES.keys())}")
+        raise typer.Exit(1)
+
+    # Prüfen ob Issue existiert
+    issues = db.get_issues()
+    issue = next((i for i in issues if i.id == issue_id), None)
+
+    if not issue:
+        err_console.print(f"[red]Issue {issue_id} nicht gefunden.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        db.recommend_ignore(issue_id, category, reason, reviewer)
+    except ValueError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+
+    if json_output:
+        data = {
+            "issue_id": issue_id,
+            "category": category,
+            "category_label": IGNORE_CATEGORIES[category],
+            "reason": reason,
+            "reviewer": reviewer,
+            "status": "pending",
+        }
+        console.print_json(json.dumps(data))
+        return
+
+    console.print(
+        f"[green]Empfehlung gespeichert:[/green] Issue #{issue_id}\n"
+        f"  Kategorie: {IGNORE_CATEGORIES[category]}\n"
+        f"  Grund: {reason}\n"
+        f"  Reviewer: {reviewer}\n"
+        f"[dim]Bitte manuell in Codacy als Ignored markieren.[/dim]"
+    )
+
+
+# =============================================================================
+# PENDING-IGNORES (Noch nicht in Codacy markiert)
+# =============================================================================
+
+
+@app.command("pending-ignores")
+def pending_ignores(
+    project_name: str = typer.Argument(None, help="Projektname (optional)"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="JSON Output"),
+):
+    """Listet Issues mit KI-Empfehlung die noch nicht in Codacy ignoriert wurden."""
+    db = get_db()
+
+    project_id = None
+    if project_name:
+        project = db.get_project_by_name(project_name)
+        if not project:
+            err_console.print(f"[red]Projekt '{project_name}' nicht gefunden.[/red]")
+            raise typer.Exit(1)
+        project_id = project.id
+
+    pending = db.get_pending_ignores(project_id)
+
+    if json_output:
+        data = [
+            {
+                "id": i.id,
+                "project_id": i.project_id,
+                "title": i.title,
+                "priority": i.priority,
+                "ki_category": i.ki_recommendation_category,
+                "ki_category_label": IGNORE_CATEGORIES.get(i.ki_recommendation_category or "", ""),
+                "ki_reason": i.ki_recommendation,
+                "ki_reviewer": i.ki_reviewed_by,
+                "ki_reviewed_at": str(i.ki_reviewed_at) if i.ki_reviewed_at else None,
+            }
+            for i in pending
+        ]
+        console.print_json(json.dumps(data, default=str))
+        return
+
+    if not pending:
+        console.print("[green]Keine ausstehenden Ignore-Empfehlungen.[/green]")
+        return
+
+    table = Table(title="Ausstehende Ignore-Empfehlungen")
+    table.add_column("ID", style="dim")
+    table.add_column("Pri", style="bold")
+    table.add_column("Kategorie", style="cyan")
+    table.add_column("Titel")
+    table.add_column("Reviewer", style="dim")
+
+    priority_colors = {
+        "Critical": "red",
+        "High": "yellow",
+        "Medium": "blue",
+        "Low": "green",
+    }
+
+    for issue in pending:
+        color = priority_colors.get(issue.priority, "white")
+        cat_label = IGNORE_CATEGORIES.get(issue.ki_recommendation_category or "", "-")
+        table.add_row(
+            str(issue.id),
+            f"[{color}]{issue.priority}[/{color}]",
+            cat_label,
+            issue.title[:40] + "..." if len(issue.title or "") > 40 else issue.title,
+            issue.ki_reviewed_by or "-",
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Gesamt: {len(pending)} Issue(s) zum manuellen Markieren in Codacy[/dim]")
 
 
 # =============================================================================

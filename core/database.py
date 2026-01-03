@@ -59,6 +59,13 @@ class Issue:
     notes: str | None = None
     created_at: datetime | None = None
     synced_at: datetime | None = None
+    # KI-Empfehlungen (lokal, wird nicht zu Codacy synchronisiert)
+    ki_recommendation_category: str | None = (
+        None  # accepted_use, false_positive, not_exploitable, test_code, external_code
+    )
+    ki_recommendation: str | None = None  # Begründung der KI
+    ki_reviewed_by: str | None = None  # claude, codex, gemini
+    ki_reviewed_at: datetime | None = None
 
 
 @dataclass
@@ -248,6 +255,16 @@ class DatabaseManager:
             # Migration: codacy_result_id hinzufügen falls nicht vorhanden
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute("ALTER TABLE issue_meta ADD COLUMN codacy_result_id TEXT")
+
+            # Migration: KI-Empfehlungsfelder hinzufügen
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE issue_meta ADD COLUMN ki_recommendation_category TEXT")
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE issue_meta ADD COLUMN ki_recommendation TEXT")
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE issue_meta ADD COLUMN ki_reviewed_by TEXT")
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE issue_meta ADD COLUMN ki_reviewed_at TIMESTAMP")
 
             # Handoffs
             conn.execute("""
@@ -558,6 +575,75 @@ class DatabaseManager:
                 (release, issue_id),
             )
             conn.commit()
+
+    def recommend_ignore(
+        self,
+        issue_id: int,
+        category: str,
+        reason: str,
+        reviewer: str,
+    ) -> None:
+        """
+        KI empfiehlt ein Issue zum Ignorieren.
+
+        Args:
+            issue_id: Issue ID
+            category: Kategorie (accepted_use, false_positive, not_exploitable, test_code, external_code)
+            reason: Begründung
+            reviewer: KI-Name (claude, codex, gemini)
+        """
+        valid_categories = {
+            "accepted_use",
+            "false_positive",
+            "not_exploitable",
+            "test_code",
+            "external_code",
+        }
+        if category not in valid_categories:
+            raise ValueError(f"Ungültige Kategorie: {category}. Erlaubt: {valid_categories}")
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE issue_meta SET
+                    ki_recommendation_category = ?,
+                    ki_recommendation = ?,
+                    ki_reviewed_by = ?,
+                    ki_reviewed_at = ?
+                WHERE id = ?
+                """,
+                (category, reason, reviewer, datetime.now().isoformat(), issue_id),
+            )
+            conn.commit()
+
+    def get_pending_ignores(self, project_id: int | None = None) -> list[Issue]:
+        """
+        Lädt Issues die eine KI-Empfehlung haben, aber noch nicht in Codacy ignoriert sind.
+
+        Args:
+            project_id: Optional - Filter nach Projekt
+        """
+        with self._get_connection() as conn:
+            query = """
+                SELECT * FROM issue_meta
+                WHERE ki_recommendation IS NOT NULL
+                AND is_false_positive = 0
+            """
+            params: list = []
+
+            if project_id is not None:
+                query += " AND project_id = ?"
+                params.append(project_id)
+
+            query += " ORDER BY ki_reviewed_at DESC"
+
+            cursor = conn.execute(query, params)
+            issues = []
+            for row in cursor.fetchall():
+                data = dict(row)
+                data["is_false_positive"] = bool(data.get("is_false_positive"))
+                issues.append(Issue(**data))
+            return issues
 
     def get_issue_stats(self, project_id: int | None = None) -> dict[str, Any]:
         """Gibt Statistiken über Issues zurück."""

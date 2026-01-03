@@ -375,15 +375,52 @@ class KIWorkspaceApp:
                             )
                             fp_result = gr.Textbox(label="Ergebnis", interactive=False)
 
-                # === False Positives Tab ===
-                with gr.Tab("🚫 False Positives"):
-                    gr.Markdown("### Alle False Positives")
-                    gr.Markdown("*Kommt in Phase 2 - Übersicht aller FPs mit Sync-Status*")
-                    gr.Dataframe(
-                        headers=["ID", "Projekt", "Titel", "Begründung", "Markiert am"],
-                        datatype=["number", "str", "str", "str", "str"],
+                # === Pending Ignores Tab (KI-Empfehlungen) ===
+                with gr.Tab("📋 Pending Ignores"):
+                    gr.Markdown("### KI-Empfehlungen zum Ignorieren")
+                    gr.Markdown(
+                        "Issues die eine KI (Claude, Codex, Gemini) zum Ignorieren empfohlen hat, "
+                        "aber noch nicht in Codacy als Ignored markiert wurden."
+                    )
+
+                    with gr.Row():
+                        refresh_pending_btn = gr.Button("🔄 Aktualisieren", variant="primary")
+                        pending_count = gr.Markdown("")
+
+                    pending_ignores_table = gr.Dataframe(
+                        headers=[
+                            "ID",
+                            "Pri",
+                            "Kategorie",
+                            "Titel",
+                            "Begründung",
+                            "Reviewer",
+                            "Datum",
+                        ],
+                        datatype=["number", "str", "str", "str", "str", "str", "str"],
                         interactive=False,
                     )
+
+                    gr.Markdown("---")
+                    gr.Markdown(
+                        "**Workflow:**\n"
+                        "1. KI analysiert Issue und ruft `ki-workspace recommend-ignore` auf\n"
+                        "2. User sieht Empfehlung hier in der Liste\n"
+                        "3. User markiert manuell in Codacy Web-UI als Ignored\n"
+                        "4. Nächster Sync entfernt Issue aus dieser Liste"
+                    )
+
+                    # Kategorie-Legende
+                    with gr.Accordion("📖 Kategorien-Erklärung", open=False):
+                        gr.Markdown(
+                            "| Kategorie | Bedeutung |\n"
+                            "|-----------|----------|\n"
+                            "| **Accepted use** | Bewusst so implementiert, kein Risiko |\n"
+                            "| **False positive** | Tool-Fehlalarm, kein echtes Problem |\n"
+                            "| **Not exploitable** | Theoretisch verwundbar, praktisch nicht ausnutzbar |\n"
+                            "| **Test code** | Nur in Tests, nicht in Produktion |\n"
+                            "| **External code** | Fremdcode/Vendor, nicht von uns wartbar |"
+                        )
 
                 # === GitHub Status Tab ===
                 with gr.Tab("🐙 GitHub"):
@@ -785,6 +822,64 @@ class KIWorkspaceApp:
                 fn=self.get_stats,
                 inputs=[project_dropdown],
                 outputs=dashboard_stats,
+            )
+
+            # === Pending Ignores Tab Event Handlers ===
+
+            # Kategorie-Labels (wie in Codacy UI)
+            ki_category_labels = {
+                "accepted_use": "Accepted use",
+                "false_positive": "False positive",
+                "not_exploitable": "Not exploitable",
+                "test_code": "Test code",
+                "external_code": "External code",
+            }
+
+            def load_pending_ignores(project_id):
+                """Lädt Issues mit KI-Empfehlung die noch nicht in Codacy ignored sind."""
+                pending = self.db.get_pending_ignores(project_id)
+
+                priority_emoji = {
+                    "Critical": "🔴",
+                    "High": "🟠",
+                    "Medium": "🟡",
+                    "Low": "🟢",
+                }
+
+                rows = []
+                for issue in pending:
+                    cat_label = ki_category_labels.get(issue.ki_recommendation_category or "", "-")
+                    date_str = str(issue.ki_reviewed_at)[:10] if issue.ki_reviewed_at else "-"
+                    rows.append(
+                        [
+                            issue.id,
+                            priority_emoji.get(issue.priority, "⚪"),
+                            cat_label,
+                            issue.title[:50] + "..."
+                            if len(issue.title or "") > 50
+                            else issue.title,
+                            issue.ki_recommendation[:40] + "..."
+                            if len(issue.ki_recommendation or "") > 40
+                            else issue.ki_recommendation,
+                            issue.ki_reviewed_by or "-",
+                            date_str,
+                        ]
+                    )
+
+                count_text = f"**{len(pending)} Issue(s)** zum manuellen Markieren in Codacy"
+                return rows, count_text
+
+            refresh_pending_btn.click(
+                fn=load_pending_ignores,
+                inputs=[project_dropdown],
+                outputs=[pending_ignores_table, pending_count],
+            )
+
+            # Auch bei Projekt-Wechsel aktualisieren
+            project_dropdown.change(
+                fn=load_pending_ignores,
+                inputs=[project_dropdown],
+                outputs=[pending_ignores_table, pending_count],
             )
 
             # === GitHub Tab Event Handlers ===
