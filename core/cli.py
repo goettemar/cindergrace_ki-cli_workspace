@@ -106,6 +106,10 @@ def status(
     # Issue-Statistiken holen
     stats = db.get_issue_stats(project.id)
 
+    # Phase holen
+    phase = db.get_phase(project.phase_id) if project.phase_id else None
+    phase_name = phase.display_name if phase else "Nicht gesetzt"
+
     if json_output:
         data = {
             "project": {
@@ -116,6 +120,8 @@ def status(
                 "codacy_org": project.codacy_org,
                 "has_codacy": project.has_codacy,
                 "last_sync": project.last_sync,
+                "phase": phase.name if phase else None,
+                "phase_display": phase_name,
             },
             "issues": stats,
         }
@@ -124,6 +130,7 @@ def status(
 
     console.print(f"\n[bold cyan]Projekt:[/bold cyan] {project.name}")
     console.print(f"[dim]Pfad:[/dim] {project.path}")
+    console.print(f"[magenta]Phase:[/magenta] {phase_name}")
 
     if project.has_codacy:
         console.print(f"[green]Codacy:[/green] {project.codacy_provider}/{project.codacy_org}")
@@ -290,11 +297,14 @@ def sync(
 @app.command()
 def check(
     project_name: str = typer.Argument(..., help="Projektname"),
+    phase_override: str | None = typer.Option(
+        None, "--phase", "-p", help="Phase override (sonst: Projekt-Phase)"
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON Output"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Nur Exit-Code"),
 ):
-    """Prueft Release Readiness eines Projekts."""
-    from core.checks import run_all_checks
+    """Prueft Release Readiness eines Projekts (phasenabhaengig)."""
+    from core.checks import run_phase_checks
 
     db = get_db()
     project = db.get_project_by_name(project_name)
@@ -303,20 +313,49 @@ def check(
         err_console.print(f"[red]Projekt '{project_name}' nicht gefunden.[/red]")
         raise typer.Exit(1)
 
-    results = run_all_checks(db, project)
+    # Phase bestimmen
+    if phase_override:
+        phase = db.get_phase_by_name(phase_override)
+        if not phase:
+            err_console.print(f"[red]Phase '{phase_override}' nicht gefunden.[/red]")
+            raise typer.Exit(1)
+    else:
+        phase = db.get_phase(project.phase_id) if project.phase_id else None
+        if not phase:
+            # Default-Phase holen
+            all_phases = db.get_all_phases()
+            phase = next(
+                (p for p in all_phases if p.is_default), all_phases[0] if all_phases else None
+            )
+
+    if not phase:
+        err_console.print("[red]Keine Phase definiert.[/red]")
+        raise typer.Exit(1)
+
+    # Enabled checks fuer diese Phase holen
+    enabled_checks = db.get_enabled_checks_for_phase(phase.id)
+
+    results = run_phase_checks(db, project, enabled_checks)
     passed = sum(1 for r in results if r.passed)
     total = len(results)
     all_passed = passed == total
 
+    # Nur Fehler bei error-severity zaehlen
+    errors = sum(1 for r in results if not r.passed and r.severity == "error")
+    has_errors = errors > 0
+
     if quiet:
-        raise typer.Exit(0 if all_passed else 1)
+        raise typer.Exit(0 if not has_errors else 1)
 
     if json_output:
         data = {
             "project": project.name,
+            "phase": phase.name,
+            "phase_display": phase.display_name,
             "passed": passed,
             "total": total,
             "all_passed": all_passed,
+            "has_errors": has_errors,
             "checks": [
                 {
                     "name": r.name,
@@ -328,19 +367,25 @@ def check(
             ],
         }
         console.print_json(json.dumps(data, default=str))
-        raise typer.Exit(0 if all_passed else 1)
+        raise typer.Exit(0 if not has_errors else 1)
 
-    console.print(f"\n[bold]Release Readiness Check - {project.name}[/bold]\n")
+    console.print(f"\n[bold]Release Readiness Check - {project.name}[/bold]")
+    console.print(f"[magenta]Phase: {phase.display_name}[/magenta]\n")
 
     for r in results:
-        icon = "[green]OK[/green]" if r.passed else "[red]FAIL[/red]"
-        if not r.passed and r.severity == "warning":
+        if r.passed:
+            icon = "[green]OK[/green]"
+        elif r.severity == "error":
+            icon = "[red]FAIL[/red]"
+        elif r.severity == "warning":
             icon = "[yellow]WARN[/yellow]"
+        else:
+            icon = "[dim]INFO[/dim]"
         console.print(f"  {icon} {r.name}: {r.message}")
 
     console.print(f"\n[bold]Status:[/bold] {passed}/{total} Checks bestanden")
 
-    if not all_passed:
+    if has_errors:
         raise typer.Exit(1)
 
 
@@ -684,6 +729,172 @@ def pending_ignores(
 
     console.print(table)
     console.print(f"\n[dim]Gesamt: {len(pending)} Issue(s) zum manuellen Markieren in Codacy[/dim]")
+
+
+# =============================================================================
+# FAQ
+# =============================================================================
+
+
+@app.command()
+def faq(
+    key: str | None = typer.Argument(None, help="FAQ-Key oder Suchbegriff"),
+    category: str | None = typer.Option(
+        None, "--category", "-c", help="Filter: process, workflow, command, concept"
+    ),
+    search: bool = typer.Option(False, "--search", "-s", help="Volltextsuche statt Key-Lookup"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="JSON-Ausgabe (kompakt fuer KIs)"),
+):
+    """
+    KI-FAQ anzeigen oder durchsuchen.
+
+    Beispiele:
+        ki-workspace faq                      # Alle FAQs anzeigen
+        ki-workspace faq sync_process         # Bestimmten Eintrag
+        ki-workspace faq --category workflow  # Nur Workflows
+        ki-workspace faq issue -s             # Suche nach 'issue'
+        ki-workspace faq --json               # Kompakt fuer KI-Konsum
+    """
+    db = get_db()
+
+    # Suche
+    if search and key:
+        results = db.search_faq(key)
+        if not results:
+            console.print(f"[yellow]Keine Treffer fuer: {key}[/yellow]")
+            raise typer.Exit(0)
+
+        if json_output:
+            data = [{"key": f.key, "q": f.question, "a": f.answer, "tags": f.tags} for f in results]
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+        else:
+            console.print(f"\n[bold]Suche: '{key}' ({len(results)} Treffer)[/bold]\n")
+            for f in results:
+                console.print(f"[bold cyan]{f.key}[/bold cyan] ({f.category})")
+                console.print(f"  Q: {f.question}")
+                console.print(f"  A: {f.answer}")
+                console.print()
+        return
+
+    # Einzelner Key
+    if key and not search:
+        entry = db.get_faq(key)
+        if not entry:
+            err_console.print(f"[red]FAQ nicht gefunden: {key}[/red]")
+            console.print("[dim]Tipp: ki-workspace faq -s <key> fuer Volltextsuche[/dim]")
+            raise typer.Exit(1)
+
+        if json_output:
+            data = {"key": entry.key, "q": entry.question, "a": entry.answer, "tags": entry.tags}
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+        else:
+            console.print(f"\n[bold cyan]{entry.key}[/bold cyan] ({entry.category})\n")
+            console.print(f"[bold]Q:[/bold] {entry.question}")
+            console.print(f"[bold]A:[/bold] {entry.answer}")
+            if entry.tags:
+                console.print(f"[dim]Tags: {', '.join(entry.tags)}[/dim]")
+        return
+
+    # Alle anzeigen (optional nach Kategorie gefiltert)
+    if json_output:
+        data = db.get_faq_as_json(category)
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    else:
+        entries = db.get_all_faq(category)
+        if not entries:
+            console.print("Keine FAQ-Eintraege gefunden")
+            return
+
+        current_cat = ""
+        for f in entries:
+            if f.category != current_cat:
+                current_cat = f.category
+                console.print(f"\n[bold magenta]=== {current_cat.upper()} ===[/bold magenta]\n")
+
+            console.print(f"[bold cyan]{f.key}[/bold cyan]")
+            console.print(f"  Q: {f.question}")
+            console.print(f"  A: {f.answer[:100]}{'...' if len(f.answer) > 100 else ''}")
+            console.print()
+
+
+# =============================================================================
+# PHASES
+# =============================================================================
+
+
+@app.command()
+def phases(
+    json_output: bool = typer.Option(False, "--json", "-j", help="JSON Output"),
+):
+    """Listet alle verfuegbaren Projekt-Phasen auf."""
+    db = get_db()
+    all_phases = db.get_all_phases()
+
+    if json_output:
+        data = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "display_name": p.display_name,
+                "description": p.description,
+                "is_default": p.is_default,
+            }
+            for p in all_phases
+        ]
+        console.print_json(json.dumps(data, default=str))
+        return
+
+    table = Table(title="Projekt-Phasen")
+    table.add_column("Name", style="cyan")
+    table.add_column("Anzeige", style="bold")
+    table.add_column("Beschreibung")
+    table.add_column("Default", style="dim")
+
+    for p in all_phases:
+        default_marker = "✓" if p.is_default else ""
+        table.add_row(p.name, p.display_name, p.description, default_marker)
+
+    console.print(table)
+
+
+@app.command("set-phase")
+def set_phase(
+    project_name: str = typer.Argument(..., help="Projektname"),
+    phase_name: str = typer.Argument(
+        ..., help="Phasenname (initial, development, refactoring, testing, final)"
+    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="JSON Output"),
+):
+    """Setzt die Phase eines Projekts."""
+    db = get_db()
+    project = db.get_project_by_name(project_name)
+
+    if not project:
+        err_console.print(f"[red]Projekt '{project_name}' nicht gefunden.[/red]")
+        raise typer.Exit(1)
+
+    phase = db.get_phase_by_name(phase_name)
+    if not phase:
+        err_console.print(f"[red]Phase '{phase_name}' nicht gefunden.[/red]")
+        err_console.print(
+            "[dim]Verfuegbar: initial, development, refactoring, testing, final[/dim]"
+        )
+        raise typer.Exit(1)
+
+    # Phase setzen
+    project.phase_id = phase.id
+    db.update_project(project)
+
+    if json_output:
+        data = {
+            "project": project.name,
+            "phase": phase.name,
+            "phase_display": phase.display_name,
+        }
+        console.print_json(json.dumps(data))
+        return
+
+    console.print(f"[green]Phase gesetzt:[/green] {project.name} → {phase.display_name}")
 
 
 # =============================================================================

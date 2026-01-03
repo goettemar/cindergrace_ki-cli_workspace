@@ -9,15 +9,13 @@ Zentrales Tool für Issue-Management und KI-Zusammenarbeit. Synchronisiert Issue
 ```
 cindergrace_ki-cli_workspace/
 ├── app.py              # Gradio Web-GUI (Port 7870)
+├── cli.py              # CLI Entry Point
 ├── core/
-│   ├── cli.py          # CLI-Interface (ki-workspace)
-│   ├── database.py     # SQLite mit FTS5
+│   ├── database.py     # SQLite mit FTS5 + FAQ
 │   ├── codacy_sync.py  # Codacy REST API Sync
 │   ├── checks.py       # Release Readiness Checks
-│   ├── github_api.py   # GitHub API Integration
+│   ├── project_init.py # Projekt-Erstellung/Archivierung
 │   └── crypto.py       # Verschlüsselung für API Keys
-├── data/
-│   └── licenses/       # License Templates
 └── tests/
 ```
 
@@ -26,14 +24,42 @@ cindergrace_ki-cli_workspace/
 ```bash
 ki-workspace ki-info              # IMMER ZUERST LESEN!
 ki-workspace projects             # Alle Projekte
-ki-workspace status <PROJECT>     # Projekt-Status
+ki-workspace status <PROJECT>     # Projekt-Status (inkl. Phase)
 ki-workspace issues <PROJECT>     # Issues auflisten
 ki-workspace sync <PROJECT>       # Von Codacy synchronisieren
-ki-workspace check <PROJECT>      # Release Readiness Check
+ki-workspace check <PROJECT>      # Release Readiness Check (phasenabhaengig)
+ki-workspace check <P> --phase final  # Check mit Phase-Override
+ki-workspace phases               # Verfuegbare Phasen anzeigen
+ki-workspace set-phase <P> <PHASE>    # Projekt-Phase setzen
 ki-workspace recommend-ignore     # KI empfiehlt Ignore
 ki-workspace pending-ignores      # Offene KI-Empfehlungen
-ki-workspace add-license          # Lizenz hinzufügen
+ki-workspace init <NAME>          # Neues Projekt erstellen
+ki-workspace archive <PROJECT>    # Projekt archivieren
+ki-workspace faq                  # KI-FAQ anzeigen
+ki-workspace faq <KEY>            # Bestimmten FAQ-Eintrag
+ki-workspace faq <QUERY> -s       # FAQ durchsuchen
+ki-workspace faq --json           # Kompakt für KI-Konsum
 ```
+
+## KI-FAQ System
+
+Schneller Zugriff auf Workspace-Wissen ohne Token-Verschwendung:
+
+```bash
+# Alles als kompaktes JSON (für KI-Konsum)
+ki-workspace faq --json
+
+# Bestimmtes Thema
+ki-workspace faq sync_process
+
+# Suche
+ki-workspace faq issue -s
+
+# Nach Kategorie (process, workflow, command, concept)
+ki-workspace faq --category workflow
+```
+
+**Projekt-spezifisches FAQ:** Jedes neue Projekt erhält `.ki-faq.json` mit Architektur, Konventionen und TODOs.
 
 ## KI-Workflow für Issue-Review
 
@@ -74,9 +100,20 @@ ki-workspace recommend-ignore 42 \
 
 SQLite unter `~/.ai-workspace/workspace.db`
 
-### Wichtige Felder für KIs
+### Tabellen
 
-In `issue_meta`:
+- `projects` - Projektliste mit Codacy-Config und Cache
+- `issue_meta` - Issues mit KI-Empfehlungen
+- `issues_fts` - FTS5 Index für Issue-Suche
+- `ki_faq` - Globales KI-FAQ
+- `ki_faq_fts` - FTS5 Index für FAQ-Suche
+- `project_phases` - Projekt-Phasen (Initial, Development, Testing, Final)
+- `check_matrix` - Welche Checks in welcher Phase
+- `settings` - API-Keys (verschlüsselt), Pfade
+- `handoffs` - KI-Session Übergaben
+
+### KI-Felder in issue_meta
+
 - `ki_recommendation_category` - Empfohlene Ignore-Kategorie
 - `ki_recommendation` - Begründung der KI
 - `ki_reviewed_by` - Welche KI (claude, codex, gemini)

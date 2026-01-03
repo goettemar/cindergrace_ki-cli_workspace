@@ -48,5 +48,5 @@ Die Datenbank wird in `~/.ai-workspace/workspace.db` gespeichert (global für al
 ## Roadmap
 
 - [x] Phase 1: Issue Management + Codacy Sync
-- [ ] Phase 2: Backlog + Release Management
+- [x] Phase 2: Backlog + Release Management (Projekt-Phasen, phasenabhängige Checks)
 - [ ] Phase 3: Dokumentenmanagement

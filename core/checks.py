@@ -345,28 +345,144 @@ def check_git_status(project_path: str) -> CheckResult:
 
 def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
     """
-    Fuehrt alle Release Readiness Checks aus.
+    Fuehrt Release Readiness Checks basierend auf der Projekt-Phase aus.
+
+    Die aktivierten Checks und ihre Severity werden aus der check_matrix
+    in der Datenbank geladen. So kann der Prozess flexibel angepasst werden.
 
     Args:
         db: DatabaseManager Instanz
         project: Projekt-Objekt
 
     Returns:
-        Liste aller CheckResults
+        Liste der CheckResults (nur aktivierte Checks)
     """
     results = []
 
+    # Check-Funktionen Mapping (Name -> Funktion)
     # Datei-basierte Checks
-    if project.path:
-        results.append(check_license(project.path))
-        results.append(check_readme(project.path))
-        results.append(check_changelog(project.path))
-        results.append(check_radon_complexity(project.path))
-        results.append(check_tests(project.path))
-        results.append(check_git_status(project.path))
+    file_checks = {
+        "LICENSE": lambda: check_license(project.path),
+        "README": lambda: check_readme(project.path),
+        "CHANGELOG": lambda: check_changelog(project.path),
+        "Radon Complexity": lambda: check_radon_complexity(project.path),
+        "Tests": lambda: check_tests(project.path),
+        "Git Status": lambda: check_git_status(project.path),
+    }
 
-    # Datenbank-basierte Checks
-    results.append(check_critical_issues(db, project.id))
-    results.append(check_high_issues(db, project.id))
+    # DB-basierte Checks
+    db_checks = {
+        "Critical Issues": lambda: check_critical_issues(db, project.id),
+        "High Issues": lambda: check_high_issues(db, project.id),
+    }
+
+    # Aktivierte Checks aus der Matrix laden
+    enabled_checks: dict[str, str] = {}
+    if project.phase_id:
+        enabled_checks = db.get_enabled_checks_for_phase(project.phase_id)
+
+    # Fallback: Wenn keine Phase gesetzt, alle Checks mit Default-Severity
+    if not enabled_checks:
+        enabled_checks = {
+            "LICENSE": "error",
+            "README": "error",
+            "CHANGELOG": "warning",
+            "Radon Complexity": "warning",
+            "Tests": "error",
+            "Git Status": "warning",
+            "Critical Issues": "error",
+            "High Issues": "warning",
+        }
+
+    # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)
+    if project.path:
+        for check_name, check_func in file_checks.items():
+            if check_name in enabled_checks:
+                result = check_func()
+                # Severity aus Matrix ueberschreiben (ausser bei info/uebersprungen)
+                if result.severity != "info":
+                    result.severity = enabled_checks[check_name]
+                results.append(result)
+
+    # DB-basierte Checks ausfuehren
+    for check_name, check_func in db_checks.items():
+        if check_name in enabled_checks:
+            result = check_func()
+            if result.severity != "info":
+                result.severity = enabled_checks[check_name]
+            results.append(result)
 
     return results
+
+
+def run_phase_checks(
+    db: DatabaseManager, project: Project, enabled_checks: dict[str, str]
+) -> list[CheckResult]:
+    """
+    Fuehrt Release Readiness Checks basierend auf uebergebenen enabled_checks aus.
+
+    Args:
+        db: DatabaseManager Instanz
+        project: Projekt-Objekt
+        enabled_checks: Dict von check_name -> severity (aus check_matrix)
+
+    Returns:
+        Liste der CheckResults (nur aktivierte Checks)
+    """
+    results = []
+
+    # Check-Funktionen Mapping (Name -> Funktion)
+    # Datei-basierte Checks
+    file_checks = {
+        "LICENSE": lambda: check_license(project.path),
+        "README": lambda: check_readme(project.path),
+        "CHANGELOG": lambda: check_changelog(project.path),
+        "Radon Complexity": lambda: check_radon_complexity(project.path),
+        "Tests": lambda: check_tests(project.path),
+        "Git Status": lambda: check_git_status(project.path),
+    }
+
+    # DB-basierte Checks
+    db_checks = {
+        "Critical Issues": lambda: check_critical_issues(db, project.id),
+        "High Issues": lambda: check_high_issues(db, project.id),
+    }
+
+    # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)
+    if project.path:
+        for check_name, check_func in file_checks.items():
+            if check_name in enabled_checks:
+                result = check_func()
+                # Severity aus Matrix ueberschreiben (ausser bei info/uebersprungen)
+                if result.severity != "info":
+                    result.severity = enabled_checks[check_name]
+                results.append(result)
+
+    # DB-basierte Checks ausfuehren
+    for check_name, check_func in db_checks.items():
+        if check_name in enabled_checks:
+            result = check_func()
+            if result.severity != "info":
+                result.severity = enabled_checks[check_name]
+            results.append(result)
+
+    return results
+
+
+def get_phase_info(db: DatabaseManager, phase_id: int | None) -> dict[str, str] | None:
+    """
+    Gibt Informationen zur aktuellen Phase zurueck.
+
+    Args:
+        db: DatabaseManager Instanz
+        phase_id: Phase-ID
+
+    Returns:
+        Dict mit name und display_name oder None
+    """
+    if not phase_id:
+        return None
+    phase = db.get_phase(phase_id)
+    if phase:
+        return {"name": phase.name, "display_name": phase.display_name}
+    return None

@@ -269,7 +269,34 @@ class KIWorkspaceApp:
 
     def build_ui(self) -> gr.Blocks:
         """Erstellt die Gradio-Oberfläche."""
-        with gr.Blocks(title="KI-CLI Workspace") as app:
+        # Custom CSS für größere Schrift (Standard: ~14px, jetzt: 18px)
+        custom_css = """
+        .gradio-container {
+            font-size: 18px !important;
+        }
+        .markdown-text {
+            font-size: 18px !important;
+        }
+        .prose {
+            font-size: 18px !important;
+        }
+        label {
+            font-size: 16px !important;
+        }
+        input, textarea, select {
+            font-size: 16px !important;
+        }
+        button {
+            font-size: 16px !important;
+        }
+        table {
+            font-size: 16px !important;
+        }
+        .dataframe {
+            font-size: 15px !important;
+        }
+        """
+        with gr.Blocks(title="KI-CLI Workspace", css=custom_css) as app:
             gr.Markdown("# 🤖 KI-CLI Workspace")
             gr.Markdown("Issue-Management und KI-übergreifende Zusammenarbeit")
 
@@ -285,22 +312,127 @@ class KIWorkspaceApp:
 
             with gr.Tabs():
                 # === Dashboard Tab ===
-                with gr.Tab("🏠 Dashboard"):
-                    gr.Markdown("### Willkommen im KI-CLI Workspace")
-                    gr.Markdown(
-                        "Dieses Tool dient der projektübergreifenden Issue-Verwaltung "
-                        "und KI-Zusammenarbeit."
-                    )
+                with gr.Tab("📊 Dashboard"):
+                    gr.Markdown("### Projekt-Übersicht")
+                    gr.Markdown("*Gecachte Daten - aktualisiert bei Sync/Release Check*")
 
                     with gr.Row():
-                        with gr.Column():
-                            gr.Markdown("### 📊 Statistiken")
-                            dashboard_stats = gr.Markdown()
-                            refresh_dashboard_btn = gr.Button("🔄 Aktualisieren")
+                        refresh_all_btn = gr.Button("🔄 Alle aktualisieren", variant="primary")
+                        new_project_btn = gr.Button("🆕 Neues Projekt", variant="secondary")
+                        dashboard_msg = gr.Markdown("")
 
-                        with gr.Column():
-                            gr.Markdown("### ℹ️ Projekt-Info")
-                            project_info = gr.Markdown("*Wähle ein Projekt aus*")
+                    # === Neues Projekt Panel (ausklappbar) ===
+                    with gr.Group(visible=False) as new_project_panel:
+                        gr.Markdown("### 🆕 Neues Projekt erstellen")
+                        with gr.Row():
+                            new_proj_name = gr.Textbox(
+                                label="Projektname",
+                                placeholder="cindergrace_mein_projekt",
+                                scale=2,
+                            )
+                            new_proj_status = gr.Dropdown(
+                                choices=["alpha", "beta", "stable"],
+                                value="alpha",
+                                label="Status",
+                                scale=1,
+                            )
+                        new_proj_desc = gr.Textbox(
+                            label="Beschreibung",
+                            placeholder="Kurze Beschreibung des Projekts",
+                        )
+                        with gr.Row():
+                            create_proj_btn = gr.Button("🚀 Projekt erstellen", variant="primary")
+                            cancel_proj_btn = gr.Button("Abbrechen")
+                        new_proj_result = gr.Markdown("")
+
+                    dashboard_table = gr.Dataframe(
+                        headers=[
+                            "ID",
+                            "Projekt",
+                            "Phase",
+                            "🔴 Crit",
+                            "🟠 High",
+                            "🟡 Med",
+                            "🟢 Low",
+                            "FP",
+                            "Release",
+                            "Status",
+                            "Sync",
+                        ],
+                        datatype=[
+                            "number",
+                            "str",
+                            "str",
+                            "number",
+                            "number",
+                            "number",
+                            "number",
+                            "number",
+                            "str",
+                            "str",
+                            "str",
+                        ],
+                        interactive=False,
+                    )
+
+                    gr.Markdown("---")
+                    gr.Markdown(
+                        "**Legende:** "
+                        "🔴 Critical | 🟠 High | 🟡 Medium | 🟢 Low | "
+                        "FP = False Positives + KI-Empfehlungen | "
+                        "✅ Ready | ⚠️ Not Ready | ❓ Nicht geprüft"
+                    )
+
+                    # === Detail-Panel (erscheint bei Klick auf Projekt) ===
+                    gr.Markdown("---")
+                    dash_selected_id = gr.State(value=None)
+
+                    with gr.Group(visible=False) as dash_detail_group:
+                        dash_detail_header = gr.Markdown("### 📁 Projekt-Details")
+
+                        with gr.Row():
+                            with gr.Column(scale=2):
+                                dash_detail_info = gr.Markdown(
+                                    "*Wähle ein Projekt aus der Tabelle*"
+                                )
+                            with gr.Column(scale=1), gr.Row():
+                                dash_sync_btn = gr.Button("🔄 Sync", size="sm")
+                                dash_check_btn = gr.Button("✓ Check", size="sm")
+                                dash_goto_btn = gr.Button("📋 Issues", size="sm")
+                                dash_archive_btn = gr.Button("📦 Archiv", size="sm", variant="stop")
+
+                        with gr.Row():
+                            with gr.Column():
+                                gr.Markdown("#### 🔴 Critical Issues")
+                                dash_critical_list = gr.Markdown("*Keine*")
+                            with gr.Column():
+                                gr.Markdown("#### 🟠 High Issues")
+                                dash_high_list = gr.Markdown("*Keine*")
+
+                        with gr.Row():
+                            gr.Markdown("#### ✓ Release Check")
+                        dash_release_info = gr.Markdown("*Noch nicht geprüft*")
+
+                        dash_detail_msg = gr.Markdown("")
+
+                        # Archiv-Bestätigung (ausgeblendet)
+                        with gr.Group(visible=False) as archive_confirm_group:
+                            gr.Markdown("### ⚠️ Projekt archivieren?")
+                            gr.Markdown(
+                                "Dies wird:\n"
+                                "1. Ordner nach `/projekte/archiv/` verschieben\n"
+                                "2. GitHub Repo löschen\n"
+                                "3. Projekt in DB archivieren"
+                            )
+                            archive_confirm_name = gr.Textbox(
+                                label="Projektname zur Bestätigung eingeben",
+                                placeholder="Projektname",
+                            )
+                            with gr.Row():
+                                archive_confirm_btn = gr.Button(
+                                    "🗑️ Endgültig archivieren", variant="stop"
+                                )
+                                archive_cancel_btn = gr.Button("Abbrechen")
 
                 # === Issues Tab (Codacy) ===
                 with gr.Tab("📋 Issues (Codacy)"):
@@ -401,6 +533,26 @@ class KIWorkspaceApp:
                         interactive=False,
                     )
 
+                    # Detail-Panel für vollständige Begründung
+                    with gr.Accordion("📝 Details für Codacy", open=True):
+                        gr.Markdown(
+                            "*Klicke auf eine Zeile. Kopiere Kategorie + Begründung für Codacy.*"
+                        )
+                        detail_issue_info = gr.Markdown("*Keine Auswahl*")
+
+                        with gr.Row():
+                            detail_category = gr.Textbox(
+                                label="🏷️ Kategorie (in Codacy auswählen)",
+                                interactive=False,
+                            )
+                        detail_category_hint = gr.Markdown("")
+
+                        detail_reason = gr.Textbox(
+                            label="📋 Begründung (in Codacy einfügen)",
+                            lines=4,
+                            interactive=False,
+                        )
+
                     gr.Markdown("---")
                     gr.Markdown(
                         "**Workflow:**\n"
@@ -476,6 +628,82 @@ class KIWorkspaceApp:
                     gr.Markdown("### Release Readiness Check")
                     gr.Markdown("Prüft ob ein Projekt bereit für Release/Publikation ist.")
 
+                    # Projekt-Phase Auswahl
+                    with gr.Row():
+                        phase_dropdown = gr.Dropdown(
+                            label="📊 Projekt-Phase",
+                            choices=[],
+                            value=None,
+                            interactive=True,
+                        )
+                        save_phase_btn = gr.Button("💾 Phase speichern")
+
+                    phase_info = gr.Markdown("*Phase bestimmt welche Checks aktiv sind*")
+
+                    def load_phases():
+                        """Lädt alle Phasen als Choices."""
+                        phases = self.db.get_all_phases()
+                        return [(f"{p.display_name}", p.id) for p in phases]
+
+                    def get_project_phase(project_id: int | None):
+                        """Gibt die aktuelle Phase eines Projekts zurück."""
+                        if not project_id:
+                            return gr.update(choices=load_phases(), value=None)
+                        project = self.db.get_project(project_id)
+                        if not project:
+                            return gr.update(choices=load_phases(), value=None)
+                        choices = load_phases()
+                        return gr.update(choices=choices, value=project.phase_id)
+
+                    def save_project_phase(project_id: int | None, phase_id: int | None):
+                        """Speichert die Phase eines Projekts."""
+                        if not project_id:
+                            return "❌ Kein Projekt ausgewählt"
+                        if not phase_id:
+                            return "❌ Keine Phase ausgewählt"
+                        project = self.db.get_project(project_id)
+                        if not project:
+                            return "❌ Projekt nicht gefunden"
+                        project.phase_id = phase_id
+                        self.db.update_project(project)
+                        phase = self.db.get_phase(phase_id)
+                        phase_name = phase.display_name if phase else "Unbekannt"
+                        return f"✅ Phase **{phase_name}** gespeichert"
+
+                    def get_phase_description(phase_id: int | None):
+                        """Gibt die Beschreibung einer Phase zurück."""
+                        if not phase_id:
+                            return "*Phase bestimmt welche Checks aktiv sind*"
+                        phase = self.db.get_phase(phase_id)
+                        if not phase:
+                            return "*Phase bestimmt welche Checks aktiv sind*"
+                        enabled = self.db.get_enabled_checks_for_phase(phase_id)
+                        check_list = ", ".join(sorted(enabled.keys()))
+                        return f"**{phase.display_name}**: {phase.description}\n\nAktive Checks: {check_list}"
+
+                    # Bei Projektwechsel Phase laden
+                    project_dropdown.change(
+                        fn=get_project_phase,
+                        inputs=[project_dropdown],
+                        outputs=[phase_dropdown],
+                    )
+
+                    # Phase-Beschreibung aktualisieren
+                    phase_dropdown.change(
+                        fn=get_phase_description,
+                        inputs=[phase_dropdown],
+                        outputs=[phase_info],
+                    )
+
+                    # Phase speichern
+                    save_phase_btn.click(
+                        fn=save_project_phase,
+                        inputs=[project_dropdown, phase_dropdown],
+                        outputs=[phase_info],
+                    )
+
+                    gr.Markdown("---")
+
                     with gr.Row():
                         check_btn = gr.Button("🔍 Check ausführen", variant="primary")
 
@@ -493,7 +721,7 @@ class KIWorkspaceApp:
                         if not project_id:
                             return [], "❌ Kein Projekt ausgewählt"
 
-                        from core.checks import run_all_checks
+                        from core.checks import get_phase_info, run_all_checks
 
                         project = self.db.get_project(project_id)
                         if not project:
@@ -518,10 +746,20 @@ class KIWorkspaceApp:
 
                         passed = sum(1 for r in results if r.passed)
                         total = len(results)
-                        status = "READY" if passed == total else "NOT READY"
-                        color = "green" if passed == total else "red"
+                        ready = passed == total
+                        status = "READY" if ready else "NOT READY"
+                        color = "green" if ready else "red"
 
-                        summary = f"### Status: **{passed}/{total}** Checks bestanden - <span style='color:{color}'>{status}</span>"
+                        # Cache aktualisieren
+                        self.db.update_release_cache(project_id, passed, total, ready)
+
+                        # Phase-Info im Summary
+                        phase_info_data = get_phase_info(self.db, project.phase_id)
+                        phase_text = ""
+                        if phase_info_data:
+                            phase_text = f" | Phase: **{phase_info_data['display_name']}**"
+
+                        summary = f"### Status: **{passed}/{total}** Checks bestanden{phase_text} - <span style='color:{color}'>{status}</span>"
 
                         return rows, summary
 
@@ -676,6 +914,98 @@ class KIWorkspaceApp:
                                 )
                                 add_project_status = gr.Markdown()
 
+                        # --- Check-Matrix ---
+                        with gr.Tab("📊 Check-Matrix"):
+                            gr.Markdown("### Phasen & Release Checks")
+                            gr.Markdown(
+                                "Konfiguriere welche Checks in welcher Projekt-Phase aktiv sind "
+                                "und wie wichtig sie sind (Blocker vs. Empfohlen)."
+                            )
+
+                            # Phase-Auswahl
+                            matrix_phase_dropdown = gr.Dropdown(
+                                label="Phase auswählen",
+                                choices=[],
+                                value=None,
+                                interactive=True,
+                            )
+
+                            matrix_table = gr.Dataframe(
+                                headers=["Check", "Aktiv", "Wichtigkeit"],
+                                datatype=["str", "bool", "str"],
+                                interactive=True,
+                                label="Checks für diese Phase",
+                            )
+
+                            with gr.Row():
+                                save_matrix_btn = gr.Button(
+                                    "💾 Matrix speichern", variant="primary"
+                                )
+                                matrix_status = gr.Markdown()
+
+                            def load_matrix_phases():
+                                """Lädt Phasen für Matrix-Dropdown."""
+                                phases = self.db.get_all_phases()
+                                return [(f"{p.display_name} ({p.name})", p.id) for p in phases]
+
+                            def load_matrix_for_phase(phase_id: int | None):
+                                """Lädt die Check-Matrix für eine Phase."""
+                                if not phase_id:
+                                    return []
+                                entries = self.db.get_check_matrix_for_phase(phase_id)
+                                rows = []
+                                for e in entries:
+                                    severity_display = {
+                                        "error": "🔴 Blocker",
+                                        "warning": "🟡 Empfohlen",
+                                        "info": "⚪ Info",
+                                    }.get(e.severity, e.severity)
+                                    rows.append([e.check_name, e.enabled, severity_display])
+                                return rows
+
+                            def save_matrix(phase_id: int | None, matrix_data: list):
+                                """Speichert die Check-Matrix."""
+                                if not phase_id:
+                                    return "❌ Keine Phase ausgewählt"
+                                if not matrix_data:
+                                    return "❌ Keine Daten"
+
+                                # Severity-Mapping zurück
+                                severity_map = {
+                                    "🔴 Blocker": "error",
+                                    "🟡 Empfohlen": "warning",
+                                    "⚪ Info": "info",
+                                }
+
+                                for row in matrix_data:
+                                    if len(row) >= 3:
+                                        check_name = row[0]
+                                        enabled = bool(row[1])
+                                        severity = severity_map.get(row[2], row[2])
+                                        self.db.update_check_matrix_entry(
+                                            phase_id, check_name, enabled, severity
+                                        )
+
+                                return "✅ Matrix gespeichert"
+
+                            # Initial laden
+                            matrix_phase_dropdown.change(
+                                fn=load_matrix_for_phase,
+                                inputs=[matrix_phase_dropdown],
+                                outputs=[matrix_table],
+                            )
+
+                            save_matrix_btn.click(
+                                fn=save_matrix,
+                                inputs=[matrix_phase_dropdown, matrix_table],
+                                outputs=[matrix_status],
+                            )
+
+                            # Phasen beim Tab-Load
+                            @matrix_phase_dropdown.select
+                            def update_phases():
+                                return gr.update(choices=load_matrix_phases())
+
                         # --- Über ---
                         with gr.Tab("ℹ️ Über"):
                             gr.Markdown(
@@ -706,19 +1036,6 @@ class KIWorkspaceApp:
 
             def update_issues(*args):
                 return self.get_issues_table(*args)
-
-            def update_project_info(project_id):
-                if not project_id:
-                    return "*Wähle ein Projekt aus*"
-                project = self.db.get_project(project_id)
-                if not project:
-                    return "*Projekt nicht gefunden*"
-                return (
-                    f"**Name:** {project.name}\n\n"
-                    f"**Pfad:** `{project.path}`\n\n"
-                    f"**Git:** `{project.git_remote}`\n\n"
-                    f"**Codacy:** {project.codacy_provider}/{project.codacy_org}"
-                )
 
             def on_issue_select(evt: gr.SelectData, data):
                 try:
@@ -753,19 +1070,11 @@ class KIWorkspaceApp:
                 show_fps,
             ]
 
-            # Projekt-Wechsel aktualisiert alles
+            # Projekt-Wechsel aktualisiert Issues-Tabelle
             project_dropdown.change(
                 fn=update_issues,
                 inputs=filter_inputs,
                 outputs=issues_table,
-            ).then(
-                fn=self.get_stats,
-                inputs=[project_dropdown],
-                outputs=dashboard_stats,
-            ).then(
-                fn=update_project_info,
-                inputs=[project_dropdown],
-                outputs=project_info,
             )
 
             # Filter-Updates (ohne Projekt-Dropdown, das hat eigenen Handler)
@@ -811,17 +1120,6 @@ class KIWorkspaceApp:
                 fn=update_issues,
                 inputs=filter_inputs,
                 outputs=issues_table,
-            ).then(
-                fn=self.get_stats,
-                inputs=[project_dropdown],
-                outputs=dashboard_stats,
-            )
-
-            # Dashboard aktualisieren
-            refresh_dashboard_btn.click(
-                fn=self.get_stats,
-                inputs=[project_dropdown],
-                outputs=dashboard_stats,
             )
 
             # === Pending Ignores Tab Event Handlers ===
@@ -880,6 +1178,482 @@ class KIWorkspaceApp:
                 fn=load_pending_ignores,
                 inputs=[project_dropdown],
                 outputs=[pending_ignores_table, pending_count],
+            )
+
+            # Kategorie-Labels und Hinweise
+            category_hints = {
+                "accepted_use": "Bewusst so implementiert, kein Sicherheitsrisiko",
+                "false_positive": "Tool-Fehlalarm, kein echtes Problem im Code",
+                "not_exploitable": "Theoretisch verwundbar, praktisch nicht ausnutzbar",
+                "test_code": "Nur in Tests vorhanden, nicht in Produktion",
+                "external_code": "Fremdcode/Vendor, nicht von uns wartbar",
+            }
+
+            def show_pending_detail_by_id(table_data, evt: gr.SelectData):
+                """Zeigt vollständige Begründung anhand der Issue-ID."""
+                empty = ("*Keine Auswahl*", "", "", "")
+                if evt.index is None or table_data is None:
+                    return empty
+
+                try:
+                    row_idx = evt.index[0] if isinstance(evt.index, list | tuple) else evt.index
+
+                    # Pandas DataFrame oder Liste?
+                    if hasattr(table_data, "iloc"):
+                        if row_idx >= len(table_data):
+                            return ("*Ungültige Auswahl*", "", "", "")
+                        issue_id = table_data.iloc[row_idx, 0]
+                    else:
+                        if row_idx >= len(table_data):
+                            return ("*Ungültige Auswahl*", "", "", "")
+                        issue_id = table_data[row_idx][0]
+
+                    if not issue_id:
+                        return ("*Keine Issue-ID*", "", "", "")
+
+                    # Direkte DB-Abfrage für einzelnes Issue
+                    with self.db._get_connection() as conn:
+                        cursor = conn.execute(
+                            "SELECT * FROM issue_meta WHERE id = ?", (int(issue_id),)
+                        )
+                        row = cursor.fetchone()
+                        if not row:
+                            return (f"*Issue {issue_id} nicht gefunden*", "", "", "")
+
+                        priority = row["priority"]
+                        title = row["title"]
+                        ki_category = row["ki_recommendation_category"] or ""
+                        ki_reason = row["ki_recommendation"] or ""
+
+                    info = f"**Issue #{issue_id}** | {priority} | {title}"
+
+                    # Kategorie formatieren
+                    category_display = ki_category_labels.get(ki_category, ki_category)
+                    category_hint = category_hints.get(ki_category, "")
+                    if category_hint:
+                        category_hint = f"*{category_hint}*"
+
+                    reason = ki_reason or "*Keine Begründung vorhanden*"
+
+                    return (info, category_display, category_hint, reason)
+                except (IndexError, TypeError, ValueError) as e:
+                    return (f"*Fehler: {e}*", "", "", "")
+
+            pending_ignores_table.select(
+                fn=show_pending_detail_by_id,
+                inputs=[pending_ignores_table],
+                outputs=[detail_issue_info, detail_category, detail_category_hint, detail_reason],
+            )
+
+            # === Dashboard Event Handlers ===
+
+            def load_dashboard_data():
+                """Lädt alle Projekte mit gecachten Stats für das Dashboard."""
+                projects = self.db.get_all_projects(include_archived=False)
+                phases = {p.id: p.display_name for p in self.db.get_all_phases()}
+
+                rows = []
+                for p in projects:
+                    # Phase-Name
+                    phase_name = phases.get(p.phase_id, "-") if p.phase_id else "-"
+
+                    # Release Status
+                    if p.cache_release_total > 0:
+                        release_str = f"{p.cache_release_passed}/{p.cache_release_total}"
+                        status = "✅" if p.cache_release_ready else "⚠️"
+                    else:
+                        release_str = "-"
+                        status = "❓"
+
+                    # Sync-Zeit formatieren
+                    sync_str = str(p.last_sync)[:16].replace("T", " ") if p.last_sync else "nie"
+
+                    rows.append(
+                        [
+                            p.id,
+                            p.name,
+                            phase_name,
+                            p.cache_issues_critical,
+                            p.cache_issues_high,
+                            p.cache_issues_medium,
+                            p.cache_issues_low,
+                            p.cache_issues_fp,
+                            release_str,
+                            status,
+                            sync_str,
+                        ]
+                    )
+
+                return rows
+
+            def refresh_all_projects():
+                """Aktualisiert den Cache für alle Projekte."""
+                from core.checks import run_all_checks
+
+                projects = self.db.get_all_projects(include_archived=False)
+                updated = 0
+
+                for p in projects:
+                    # Issues-Cache aktualisieren
+                    self.db.update_project_cache(p.id)
+
+                    # Release-Check ausführen und cachen
+                    if p.path:
+                        results = run_all_checks(self.db, p)
+                        passed = sum(1 for r in results if r.passed)
+                        total = len(results)
+                        self.db.update_release_cache(p.id, passed, total, passed == total)
+
+                    updated += 1
+
+                return load_dashboard_data(), f"✅ {updated} Projekte aktualisiert"
+
+            # Dashboard beim App-Start laden
+            app.load(fn=load_dashboard_data, outputs=[dashboard_table])
+
+            refresh_all_btn.click(
+                fn=refresh_all_projects,
+                outputs=[dashboard_table, dashboard_msg],
+            )
+
+            # === Neues Projekt Event Handlers ===
+
+            def toggle_new_project_panel(visible: bool):
+                """Zeigt/versteckt das Neues-Projekt-Panel."""
+                return gr.update(visible=visible)
+
+            def create_new_project(name: str, description: str, status: str):
+                """Erstellt ein neues Projekt."""
+                if not name:
+                    return (
+                        gr.update(visible=True),
+                        "❌ Bitte Projektnamen eingeben",
+                        load_dashboard_data(),
+                    )
+
+                from core.project_init import ProjectInitializer
+
+                initializer = ProjectInitializer(self.db)
+                result = initializer.create_project(
+                    name=name,
+                    description=description,
+                    status=status,
+                    create_github=True,
+                    connect_codacy=True,
+                )
+
+                if result["success"]:
+                    # Panel schließen, Tabelle aktualisieren
+                    steps = "\n".join(result["steps"])
+                    return (
+                        gr.update(visible=False),
+                        f"✅ **Projekt erstellt!**\n\n{steps}\n\n📁 `{result['path']}`",
+                        load_dashboard_data(),
+                    )
+                else:
+                    errors = "\n".join(result["errors"])
+                    steps = "\n".join(result["steps"])
+                    return (
+                        gr.update(visible=True),
+                        f"⚠️ **Fehler:**\n{errors}\n\n**Ausgeführt:**\n{steps}",
+                        load_dashboard_data(),
+                    )
+
+            new_project_btn.click(
+                fn=lambda: gr.update(visible=True),
+                outputs=[new_project_panel],
+            )
+
+            cancel_proj_btn.click(
+                fn=lambda: (gr.update(visible=False), ""),
+                outputs=[new_project_panel, new_proj_result],
+            )
+
+            create_proj_btn.click(
+                fn=create_new_project,
+                inputs=[new_proj_name, new_proj_desc, new_proj_status],
+                outputs=[new_project_panel, new_proj_result, dashboard_table],
+            )
+
+            # === Archiv Event Handlers ===
+
+            def show_archive_confirm(project_id):
+                """Zeigt Archiv-Bestätigung."""
+                if not project_id:
+                    return gr.update(visible=False), ""
+                return gr.update(visible=True), ""
+
+            def hide_archive_confirm():
+                """Versteckt Archiv-Bestätigung."""
+                return gr.update(visible=False), ""
+
+            def archive_project(project_id, confirm_name):
+                """Archiviert das Projekt nach Bestätigung."""
+                if not project_id:
+                    return (
+                        gr.update(visible=False),
+                        "❌ Kein Projekt ausgewählt",
+                        load_dashboard_data(),
+                    )
+
+                project = self.db.get_project(project_id)
+                if not project:
+                    return (
+                        gr.update(visible=False),
+                        "❌ Projekt nicht gefunden",
+                        load_dashboard_data(),
+                    )
+
+                if confirm_name != project.name:
+                    return (
+                        gr.update(visible=True),
+                        "❌ Projektname stimmt nicht überein",
+                        load_dashboard_data(),
+                    )
+
+                from core.project_init import ProjectInitializer
+
+                initializer = ProjectInitializer(self.db)
+                result = initializer.archive_project(project_id, delete_github=True)
+
+                if result["success"]:
+                    steps = "\n".join(result["steps"])
+                    return (
+                        gr.update(visible=False),
+                        f"✅ **Projekt archiviert!**\n\n{steps}",
+                        load_dashboard_data(),
+                    )
+                else:
+                    errors = "\n".join(result["errors"])
+                    return (
+                        gr.update(visible=False),
+                        f"⚠️ **Fehler beim Archivieren:**\n{errors}",
+                        load_dashboard_data(),
+                    )
+
+            dash_archive_btn.click(
+                fn=show_archive_confirm,
+                inputs=[dash_selected_id],
+                outputs=[archive_confirm_group, archive_confirm_name],
+            )
+
+            archive_cancel_btn.click(
+                fn=hide_archive_confirm,
+                outputs=[archive_confirm_group, archive_confirm_name],
+            )
+
+            archive_confirm_btn.click(
+                fn=archive_project,
+                inputs=[dash_selected_id, archive_confirm_name],
+                outputs=[archive_confirm_group, dash_detail_msg, dashboard_table],
+            )
+
+            def load_project_details(project_id):
+                """Lädt Detail-Informationen für ein Projekt."""
+                if not project_id:
+                    return (
+                        gr.update(visible=False),
+                        "",
+                        "*Kein Projekt ausgewählt*",
+                        "*Keine*",
+                        "*Keine*",
+                        "*Noch nicht geprüft*",
+                        "",
+                    )
+
+                project = self.db.get_project(project_id)
+                if not project:
+                    return (
+                        gr.update(visible=False),
+                        "",
+                        "*Projekt nicht gefunden*",
+                        "*Keine*",
+                        "*Keine*",
+                        "*Noch nicht geprüft*",
+                        "",
+                    )
+
+                # Phase
+                phase_name = "-"
+                if project.phase_id:
+                    phase = self.db.get_phase(project.phase_id)
+                    if phase:
+                        phase_name = phase.display_name
+
+                # Projekt-Info
+                info = f"""**{project.name}** ({phase_name})
+
+📁 `{project.path or 'Kein Pfad'}`
+
+🔗 `{project.git_remote or 'Kein Git Remote'}`
+
+📊 Codacy: `{project.codacy_provider or '-'}/{project.codacy_org or '-'}`
+"""
+
+                # Critical Issues laden (max 10) als Tabelle
+                critical_issues = self.db.get_issues(
+                    project_id=project_id,
+                    priority="Critical",
+                    status="open",
+                    is_false_positive=False,
+                )
+                if critical_issues:
+                    critical_list = "| Issue | Datei | Zeile |\n|-------|-------|-------|\n"
+                    for i in critical_issues[:10]:
+                        title = i.title[:50] + "..." if len(i.title) > 50 else i.title
+                        file_name = i.file_path.split("/")[-1] if i.file_path else "-"
+                        line = str(i.line_number) if i.line_number else "-"
+                        critical_list += f"| {title} | `{file_name}` | {line} |\n"
+                    if len(critical_issues) > 10:
+                        critical_list += f"\n*... und {len(critical_issues) - 10} weitere*"
+                else:
+                    critical_list = "✅ *Keine Critical Issues*"
+
+                # High Issues laden (max 10) als Tabelle
+                high_issues = self.db.get_issues(
+                    project_id=project_id,
+                    priority="High",
+                    status="open",
+                    is_false_positive=False,
+                )
+                if high_issues:
+                    high_list = "| Issue | Datei | Zeile |\n|-------|-------|-------|\n"
+                    for i in high_issues[:10]:
+                        title = i.title[:50] + "..." if len(i.title) > 50 else i.title
+                        file_name = i.file_path.split("/")[-1] if i.file_path else "-"
+                        line = str(i.line_number) if i.line_number else "-"
+                        high_list += f"| {title} | `{file_name}` | {line} |\n"
+                    if len(high_issues) > 10:
+                        high_list += f"\n*... und {len(high_issues) - 10} weitere*"
+                else:
+                    high_list = "✅ *Keine High Issues*"
+
+                # Release Check Info
+                if project.cache_release_total > 0:
+                    passed = project.cache_release_passed
+                    total = project.cache_release_total
+                    status_icon = "✅" if project.cache_release_ready else "⚠️"
+                    release_info = f"{status_icon} **{passed}/{total}** Checks bestanden"
+
+                    # Checks einzeln laden wenn vorhanden
+                    if project.path:
+                        from core.checks import run_all_checks
+
+                        results = run_all_checks(self.db, project)
+                        check_items = []
+                        for r in results:
+                            icon = "✅" if r.passed else ("⚠️" if r.severity == "warning" else "❌")
+                            check_items.append(f"{icon} {r.name}")
+                        release_info += "\n\n" + " | ".join(check_items)
+                else:
+                    release_info = "❓ *Noch nicht geprüft - klicke auf 'Check'*"
+
+                return (
+                    gr.update(visible=True),
+                    f"### 📁 {project.name}",
+                    info,
+                    critical_list,
+                    high_list,
+                    release_info,
+                    "",
+                )
+
+            def on_dashboard_select(evt: gr.SelectData, data):
+                """Handler für Klick auf Dashboard-Tabelle."""
+                try:
+                    if evt.index is not None:
+                        row_idx = evt.index[0] if isinstance(evt.index, list | tuple) else evt.index
+                        if data is not None and row_idx < len(data):
+                            # Projekt-ID aus erster Spalte
+                            if hasattr(data, "iloc"):
+                                project_id = int(data.iloc[row_idx, 0])
+                            else:
+                                project_id = int(data[row_idx][0])
+                            return project_id, *load_project_details(project_id)
+                except Exception as e:
+                    logger.error(f"Dashboard select error: {e}")
+                return None, gr.update(visible=False), "", "", "", "", "", ""
+
+            def dash_sync_project(project_id):
+                """Sync für ausgewähltes Projekt."""
+                if not project_id:
+                    return "⚠️ Kein Projekt ausgewählt"
+                result = self.sync_from_codacy(project_id)
+                return f"🔄 {result}"
+
+            def dash_check_project(project_id):
+                """Release Check für ausgewähltes Projekt."""
+                if not project_id:
+                    return "*Noch nicht geprüft*", "⚠️ Kein Projekt ausgewählt"
+
+                project = self.db.get_project(project_id)
+                if not project or not project.path:
+                    return "*Projekt hat keinen Pfad*", "⚠️ Kein Pfad konfiguriert"
+
+                from core.checks import run_all_checks
+
+                results = run_all_checks(self.db, project)
+                passed = sum(1 for r in results if r.passed)
+                total = len(results)
+
+                # Cache aktualisieren
+                self.db.update_release_cache(project_id, passed, total, passed == total)
+
+                # Ergebnis formatieren
+                status_icon = "✅" if passed == total else "⚠️"
+                release_info = f"{status_icon} **{passed}/{total}** Checks bestanden\n\n"
+                check_items = []
+                for r in results:
+                    icon = "✅" if r.passed else ("⚠️" if r.severity == "warning" else "❌")
+                    check_items.append(f"{icon} {r.name}")
+                release_info += " | ".join(check_items)
+
+                return release_info, f"✅ Check abgeschlossen ({passed}/{total})"
+
+            # Dashboard Table Select Handler
+            dashboard_table.select(
+                fn=on_dashboard_select,
+                inputs=[dashboard_table],
+                outputs=[
+                    dash_selected_id,
+                    dash_detail_group,
+                    dash_detail_header,
+                    dash_detail_info,
+                    dash_critical_list,
+                    dash_high_list,
+                    dash_release_info,
+                    dash_detail_msg,
+                ],
+            )
+
+            # Dashboard Action Buttons
+            dash_sync_btn.click(
+                fn=dash_sync_project,
+                inputs=[dash_selected_id],
+                outputs=[dash_detail_msg],
+            ).then(
+                fn=lambda pid: load_project_details(pid)[3:6] if pid else ("", "", ""),
+                inputs=[dash_selected_id],
+                outputs=[dash_critical_list, dash_high_list, dash_release_info],
+            ).then(
+                fn=load_dashboard_data,
+                outputs=[dashboard_table],
+            )
+
+            dash_check_btn.click(
+                fn=dash_check_project,
+                inputs=[dash_selected_id],
+                outputs=[dash_release_info, dash_detail_msg],
+            ).then(
+                fn=load_dashboard_data,
+                outputs=[dashboard_table],
+            )
+
+            # Goto Issues Tab - setzt Projekt-Dropdown
+            dash_goto_btn.click(
+                fn=lambda pid: pid,
+                inputs=[dash_selected_id],
+                outputs=[project_dropdown],
             )
 
             # === GitHub Tab Event Handlers ===
@@ -1302,7 +2076,6 @@ class KIWorkspaceApp:
             # Initial load - alle in einem
             def initial_load():
                 return (
-                    self.get_stats(None),
                     get_github_token_status(),
                     get_codacy_token_status(),
                     load_projects_table(False),
@@ -1312,7 +2085,6 @@ class KIWorkspaceApp:
             app.load(
                 fn=initial_load,
                 outputs=[
-                    dashboard_stats,
                     github_token_status,
                     token_status_box,
                     projects_table,

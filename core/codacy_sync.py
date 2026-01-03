@@ -358,8 +358,9 @@ class CodacySync:
             logger.error(f"Quality-Sync Fehler: {e}")
             stats["errors"].append(f"Quality: {e}")
 
-        # Sync-Zeit aktualisieren
+        # Sync-Zeit und Cache aktualisieren
         db.update_project_sync_time(project.id)
+        db.update_project_cache(project.id)
 
         stats["synced"] = stats["srm"] + stats["quality"]
         return stats
