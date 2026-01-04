@@ -356,8 +356,9 @@ class KIWorkspaceApp:
                             "🟢 Low",
                             "FP",
                             "CI",
+                            "Git",
                             "Release",
-                            "Sync",
+                            "Codacy",
                         ],
                         datatype=[
                             "number",
@@ -368,6 +369,7 @@ class KIWorkspaceApp:
                             "number",
                             "number",
                             "number",
+                            "str",
                             "str",
                             "str",
                             "str",
@@ -1314,6 +1316,51 @@ class KIWorkspaceApp:
                 except (json.JSONDecodeError, KeyError):
                     return "-"
 
+            def get_git_status_short(project_path: str) -> str:
+                """Holt kurzen Git-Status für Dashboard."""
+                if not project_path:
+                    return "-"
+                import subprocess
+                from pathlib import Path
+
+                path = Path(project_path)
+                if not path.exists() or not (path / ".git").exists():
+                    return "-"
+
+                try:
+                    # Uncommitted changes
+                    result = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=path,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    uncommitted = (
+                        len(result.stdout.strip().split("\n")) if result.stdout.strip() else 0
+                    )
+
+                    # Unpushed commits
+                    result = subprocess.run(
+                        ["git", "rev-list", "--count", "@{upstream}..HEAD"],
+                        cwd=path,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    unpushed = int(result.stdout.strip()) if result.returncode == 0 else 0
+
+                    if uncommitted == 0 and unpushed == 0:
+                        return "✅"
+                    elif uncommitted > 0 and unpushed > 0:
+                        return f"📝{uncommitted} ⬆️{unpushed}"
+                    elif uncommitted > 0:
+                        return f"📝 {uncommitted}"
+                    else:
+                        return f"⬆️ {unpushed}"
+                except Exception:
+                    return "-"
+
             def load_dashboard_data():
                 """Lädt alle Projekte mit gecachten Stats für das Dashboard."""
                 projects = self.db.get_all_projects(include_archived=False)
@@ -1328,6 +1375,9 @@ class KIWorkspaceApp:
                     owner = p.github_owner or p.codacy_org
                     ci_status = get_last_ci_status(owner, p.name) if owner else "-"
 
+                    # Git Status (uncommitted/unpushed)
+                    git_status = get_git_status_short(p.path) if p.path else "-"
+
                     # Release Status
                     if p.cache_release_total > 0:
                         release_str = f"{p.cache_release_passed}/{p.cache_release_total}"
@@ -1338,8 +1388,8 @@ class KIWorkspaceApp:
                     else:
                         release_str = "-"
 
-                    # Sync-Zeit formatieren
-                    sync_str = str(p.last_sync)[:16].replace("T", " ") if p.last_sync else "nie"
+                    # Codacy Sync-Zeit formatieren
+                    codacy_str = str(p.last_sync)[:16].replace("T", " ") if p.last_sync else "nie"
 
                     rows.append(
                         [
@@ -1352,8 +1402,9 @@ class KIWorkspaceApp:
                             p.cache_issues_low,
                             p.cache_issues_fp,
                             ci_status,
+                            git_status,
                             release_str,
-                            sync_str,
+                            codacy_str,
                         ]
                     )
 
