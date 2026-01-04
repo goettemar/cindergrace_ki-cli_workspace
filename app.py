@@ -390,30 +390,31 @@ class KIWorkspaceApp:
                     dash_selected_id = gr.State(value=None)
 
                     with gr.Group(visible=False) as dash_detail_group:
-                        dash_detail_header = gr.Markdown("### 📁 Projekt-Details")
-
+                        # Header: Projektname + Buttons
                         with gr.Row():
-                            with gr.Column(scale=2):
-                                dash_detail_info = gr.Markdown(
-                                    "*Wähle ein Projekt aus der Tabelle*"
+                            dash_detail_header = gr.Markdown("### 📁 Projekt")
+                            with gr.Row():
+                                dash_sync_btn = gr.Button("🔄 Sync", size="sm", min_width=80)
+                                dash_check_btn = gr.Button("✓ Check", size="sm", min_width=80)
+                                dash_goto_btn = gr.Button("📋 Issues", size="sm", min_width=80)
+                                dash_archive_btn = gr.Button(
+                                    "📦 Archiv", size="sm", variant="stop", min_width=80
                                 )
-                            with gr.Column(scale=1), gr.Row():
-                                dash_sync_btn = gr.Button("🔄 Sync", size="sm")
-                                dash_check_btn = gr.Button("✓ Check", size="sm")
-                                dash_goto_btn = gr.Button("📋 Issues", size="sm")
-                                dash_archive_btn = gr.Button("📦 Archiv", size="sm", variant="stop")
 
+                        # Info-Zeile: Pfad, GitHub, Codacy kompakt
+                        dash_detail_info = gr.Markdown("*Wähle ein Projekt*")
+
+                        # 3-Spalten Layout: Release | Critical | High
                         with gr.Row():
-                            with gr.Column():
-                                gr.Markdown("#### 🔴 Critical Issues")
+                            with gr.Column(scale=1):
+                                gr.Markdown("##### ✓ Release Check")
+                                dash_release_info = gr.Markdown("*-*")
+                            with gr.Column(scale=1):
+                                gr.Markdown("##### 🔴 Critical Issues")
                                 dash_critical_list = gr.Markdown("*Keine*")
-                            with gr.Column():
-                                gr.Markdown("#### 🟠 High Issues")
+                            with gr.Column(scale=1):
+                                gr.Markdown("##### 🟠 High Issues")
                                 dash_high_list = gr.Markdown("*Keine*")
-
-                        with gr.Row():
-                            gr.Markdown("#### ✓ Release Check")
-                        dash_release_info = gr.Markdown("*Noch nicht geprüft*")
 
                         dash_detail_msg = gr.Markdown("")
 
@@ -421,13 +422,11 @@ class KIWorkspaceApp:
                         with gr.Group(visible=False) as archive_confirm_group:
                             gr.Markdown("### ⚠️ Projekt archivieren?")
                             gr.Markdown(
-                                "Dies wird:\n"
-                                "1. Ordner nach `/projekte/archiv/` verschieben\n"
-                                "2. GitHub Repo löschen\n"
-                                "3. Projekt in DB archivieren"
+                                "Dies verschiebt den Ordner nach `/projekte/archiv/`, "
+                                "löscht das GitHub Repo und archiviert in der DB."
                             )
                             archive_confirm_name = gr.Textbox(
-                                label="Projektname zur Bestätigung eingeben",
+                                label="Projektname zur Bestätigung",
                                 placeholder="Projektname",
                             )
                             with gr.Row():
@@ -1581,7 +1580,7 @@ class KIWorkspaceApp:
                         "*Kein Projekt ausgewählt*",
                         "*Keine*",
                         "*Keine*",
-                        "*Noch nicht geprüft*",
+                        "*-*",
                         "",
                     )
 
@@ -1593,7 +1592,7 @@ class KIWorkspaceApp:
                         "*Projekt nicht gefunden*",
                         "*Keine*",
                         "*Keine*",
-                        "*Noch nicht geprüft*",
+                        "*-*",
                         "",
                     )
 
@@ -1604,17 +1603,22 @@ class KIWorkspaceApp:
                     if phase:
                         phase_name = phase.display_name
 
-                # Projekt-Info
-                info = f"""**{project.name}** ({phase_name})
+                # Kompakte Info-Zeile
+                path_short = (
+                    project.path.replace("/home/zorinadmin/projekte/", "~/")
+                    if project.path
+                    else "-"
+                )
+                git_short = (
+                    project.git_remote.replace("https://github.com/", "gh:").replace(".git", "")
+                    if project.git_remote
+                    else "-"
+                )
+                codacy_short = f"{project.codacy_provider or '-'}/{project.codacy_org or '-'}"
 
-📁 `{project.path or 'Kein Pfad'}`
+                info = f"📁 `{path_short}` · 🔗 `{git_short}` · 📊 `{codacy_short}`"
 
-🔗 `{project.git_remote or 'Kein Git Remote'}`
-
-📊 Codacy: `{project.codacy_provider or '-'}/{project.codacy_org or '-'}`
-"""
-
-                # Critical Issues laden (max 10) als Tabelle
+                # Critical Issues laden (max 5, kompakt)
                 critical_issues = self.db.get_issues(
                     project_id=project_id,
                     priority="Critical",
@@ -1622,18 +1626,18 @@ class KIWorkspaceApp:
                     is_false_positive=False,
                 )
                 if critical_issues:
-                    critical_list = "| Issue | Datei | Zeile |\n|-------|-------|-------|\n"
-                    for i in critical_issues[:10]:
-                        title = i.title[:50] + "..." if len(i.title) > 50 else i.title
-                        file_name = i.file_path.split("/")[-1] if i.file_path else "-"
-                        line = str(i.line_number) if i.line_number else "-"
-                        critical_list += f"| {title} | `{file_name}` | {line} |\n"
-                    if len(critical_issues) > 10:
-                        critical_list += f"\n*... und {len(critical_issues) - 10} weitere*"
+                    lines = []
+                    for i in critical_issues[:5]:
+                        title = i.title[:40] + "…" if len(i.title) > 40 else i.title
+                        file_name = i.file_path.split("/")[-1][:20] if i.file_path else "-"
+                        lines.append(f"• {title} (`{file_name}:{i.line_number or '-'}`)")
+                    critical_list = "\n".join(lines)
+                    if len(critical_issues) > 5:
+                        critical_list += f"\n\n*+{len(critical_issues) - 5} weitere*"
                 else:
-                    critical_list = "✅ *Keine Critical Issues*"
+                    critical_list = "✅ Keine"
 
-                # High Issues laden (max 10) als Tabelle
+                # High Issues laden (max 5, kompakt)
                 high_issues = self.db.get_issues(
                     project_id=project_id,
                     priority="High",
@@ -1641,40 +1645,43 @@ class KIWorkspaceApp:
                     is_false_positive=False,
                 )
                 if high_issues:
-                    high_list = "| Issue | Datei | Zeile |\n|-------|-------|-------|\n"
-                    for i in high_issues[:10]:
-                        title = i.title[:50] + "..." if len(i.title) > 50 else i.title
-                        file_name = i.file_path.split("/")[-1] if i.file_path else "-"
-                        line = str(i.line_number) if i.line_number else "-"
-                        high_list += f"| {title} | `{file_name}` | {line} |\n"
-                    if len(high_issues) > 10:
-                        high_list += f"\n*... und {len(high_issues) - 10} weitere*"
+                    lines = []
+                    for i in high_issues[:5]:
+                        title = i.title[:40] + "…" if len(i.title) > 40 else i.title
+                        file_name = i.file_path.split("/")[-1][:20] if i.file_path else "-"
+                        lines.append(f"• {title} (`{file_name}:{i.line_number or '-'}`)")
+                    high_list = "\n".join(lines)
+                    if len(high_issues) > 5:
+                        high_list += f"\n\n*+{len(high_issues) - 5} weitere*"
                 else:
-                    high_list = "✅ *Keine High Issues*"
+                    high_list = "✅ Keine"
 
-                # Release Check Info
+                # Release Check Info (kompakt)
                 if project.cache_release_total > 0:
                     passed = project.cache_release_passed
                     total = project.cache_release_total
                     status_icon = "✅" if project.cache_release_ready else "⚠️"
-                    release_info = f"{status_icon} **{passed}/{total}** Checks bestanden"
 
-                    # Checks einzeln laden wenn vorhanden
+                    # Checks einzeln laden
                     if project.path:
                         from core.checks import run_all_checks
 
                         results = run_all_checks(self.db, project)
-                        check_items = []
+                        check_lines = []
                         for r in results:
-                            icon = "✅" if r.passed else ("⚠️" if r.severity == "warning" else "❌")
-                            check_items.append(f"{icon} {r.name}")
-                        release_info += "\n\n" + " | ".join(check_items)
+                            icon = "✅" if r.passed else "❌"
+                            check_lines.append(f"{icon} {r.name}")
+                        release_info = f"{status_icon} **{passed}/{total}**\n\n" + "\n".join(
+                            check_lines
+                        )
+                    else:
+                        release_info = f"{status_icon} **{passed}/{total}**"
                 else:
-                    release_info = "❓ *Noch nicht geprüft - klicke auf 'Check'*"
+                    release_info = "❓ *Nicht geprüft*"
 
                 return (
                     gr.update(visible=True),
-                    f"### 📁 {project.name}",
+                    f"### 📁 {project.name} ({phase_name})",
                     info,
                     critical_list,
                     high_list,
