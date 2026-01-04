@@ -584,10 +584,32 @@ class KIWorkspaceApp:
                             gh_cli_status_box = gr.Markdown()
                             refresh_gh_status_btn = gr.Button("🔄 Status aktualisieren")
 
-                        with gr.Column(scale=2):
+                        with gr.Column(scale=1):
+                            gr.Markdown("#### 📂 Git Status (Projekt)")
+                            git_status_box = gr.Markdown("*Projekt auswählen*")
+                            with gr.Row():
+                                refresh_git_status_btn = gr.Button("🔄 Aktualisieren", scale=1)
+                                push_sync_btn = gr.Button(
+                                    "🚀 Push & Sync", variant="primary", scale=1
+                                )
+                            push_sync_output = gr.Markdown("")
+
+                        with gr.Column(scale=1):
                             gr.Markdown("#### Notifications")
                             gh_notifications_box = gr.Markdown()
                             refresh_notifications_btn = gr.Button("🔄 Notifications laden")
+
+                    gr.Markdown("---")
+                    gr.Markdown("#### ⚡ GitHub Actions (letzte 3)")
+
+                    with gr.Row():
+                        gh_actions_table = gr.Dataframe(
+                            headers=["Status", "Workflow", "Branch", "Commit", "Zeit"],
+                            datatype=["str", "str", "str", "str", "str"],
+                            interactive=False,
+                            row_count=3,
+                        )
+                        refresh_actions_btn = gr.Button("🔄 Actions laden", scale=0)
 
                     gr.Markdown("---")
                     gr.Markdown("#### Meine Pull Requests")
@@ -1756,6 +1778,212 @@ class KIWorkspaceApp:
                 success, output = run_gh_command(args, timeout=30)
                 return output if output else "(Keine Ausgabe)"
 
+            def get_git_status(project_id: int | None):
+                """Holt Git-Status für ein Projekt (uncommitted, unpushed)."""
+                if not project_id:
+                    return "*Projekt auswählen*"
+                project = self.db.get_project(project_id)
+                if not project or not project.local_path:
+                    return "❌ Kein lokaler Pfad"
+
+                import subprocess
+                from pathlib import Path
+
+                path = Path(project.local_path)
+                if not path.exists():
+                    return f"❌ Pfad existiert nicht: {path}"
+                if not (path / ".git").exists():
+                    return "❌ Kein Git-Repository"
+
+                try:
+                    # Uncommitted changes
+                    result = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=path,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    uncommitted = result.stdout.strip().split("\n") if result.stdout.strip() else []
+                    uncommitted_count = len(uncommitted)
+
+                    # Staged changes (ready to commit)
+                    result = subprocess.run(
+                        ["git", "diff", "--cached", "--name-only"],
+                        cwd=path,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    staged = result.stdout.strip().split("\n") if result.stdout.strip() else []
+                    staged_count = len(staged)
+
+                    # Unpushed commits
+                    result = subprocess.run(
+                        ["git", "rev-list", "--count", "@{upstream}..HEAD"],
+                        cwd=path,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    unpushed = int(result.stdout.strip()) if result.returncode == 0 else 0
+
+                    # Build status display
+                    lines = []
+                    if uncommitted_count > 0:
+                        lines.append(f"📝 **{uncommitted_count}** Änderungen")
+                    if staged_count > 0:
+                        lines.append(f"✅ **{staged_count}** staged")
+                    if unpushed > 0:
+                        lines.append(f"⬆️ **{unpushed}** unpushed")
+                    if not lines:
+                        lines.append("✨ Alles synchron!")
+
+                    return "\n".join(lines)
+
+                except subprocess.SubprocessError as e:
+                    return f"❌ Git-Fehler: {e}"
+
+            def push_and_sync(project_id: int | None):
+                """Führt git add, commit (falls nötig) und push aus."""
+                if not project_id:
+                    return "❌ Kein Projekt ausgewählt", "*Projekt auswählen*"
+                project = self.db.get_project(project_id)
+                if not project or not project.local_path:
+                    return "❌ Kein lokaler Pfad", "❌ Kein lokaler Pfad"
+
+                import subprocess
+                from pathlib import Path
+
+                path = Path(project.local_path)
+                if not path.exists() or not (path / ".git").exists():
+                    return "❌ Kein Git-Repository", "❌ Kein Git-Repository"
+
+                messages = []
+                try:
+                    # Check for changes
+                    result = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=path,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    has_changes = bool(result.stdout.strip())
+
+                    if has_changes:
+                        # git add .
+                        subprocess.run(["git", "add", "."], cwd=path, check=True, timeout=30)
+                        messages.append("✅ `git add .`")
+
+                        # git commit
+                        result = subprocess.run(
+                            ["git", "commit", "-m", "Auto-commit via KI-Workspace"],
+                            cwd=path,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                        if result.returncode == 0:
+                            messages.append("✅ `git commit`")
+                        else:
+                            messages.append(f"⚠️ Commit: {result.stderr.strip()[:50]}")
+
+                    # Check for unpushed
+                    result = subprocess.run(
+                        ["git", "rev-list", "--count", "@{upstream}..HEAD"],
+                        cwd=path,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    unpushed = int(result.stdout.strip()) if result.returncode == 0 else 0
+
+                    if unpushed > 0 or has_changes:
+                        # git push
+                        result = subprocess.run(
+                            ["git", "push"], cwd=path, capture_output=True, text=True, timeout=60
+                        )
+                        if result.returncode == 0:
+                            messages.append("✅ `git push`")
+                        else:
+                            messages.append(f"❌ Push: {result.stderr.strip()[:80]}")
+                    else:
+                        messages.append("✨ Bereits synchron")
+
+                    return " | ".join(messages), get_git_status(project_id)
+
+                except subprocess.SubprocessError as e:
+                    return f"❌ Fehler: {e}", get_git_status(project_id)
+
+            def get_github_actions(project_id: int | None):
+                """Holt die letzten 3 GitHub Actions für ein Projekt."""
+                if not project_id:
+                    return []
+                project = self.db.get_project(project_id)
+                if not project or not project.provider or not project.provider_org:
+                    return []
+
+                import json
+                from datetime import datetime
+
+                # gh run list
+                cmd = [
+                    "run",
+                    "list",
+                    "-R",
+                    f"{project.provider_org}/{project.name}",
+                    "--limit",
+                    "3",
+                    "--json",
+                    "status,conclusion,name,headBranch,headSha,createdAt",
+                ]
+                success, output = run_gh_command(cmd, timeout=30)
+                if not success or not output:
+                    return []
+
+                try:
+                    runs = json.loads(output)
+                    rows = []
+                    for run in runs:
+                        # Status icon
+                        conclusion = run.get("conclusion", "")
+                        status = run.get("status", "")
+                        if conclusion == "success":
+                            icon = "✅"
+                        elif conclusion == "failure":
+                            icon = "❌"
+                        elif status == "in_progress":
+                            icon = "🔄"
+                        elif status == "queued":
+                            icon = "⏳"
+                        else:
+                            icon = "⚪"
+
+                        # Time formatting
+                        created = run.get("createdAt", "")
+                        if created:
+                            try:
+                                dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                                time_str = dt.strftime("%d.%m. %H:%M")
+                            except ValueError:
+                                time_str = created[:16]
+                        else:
+                            time_str = "-"
+
+                        rows.append(
+                            [
+                                icon,
+                                run.get("name", "")[:25],
+                                run.get("headBranch", "")[:15],
+                                run.get("headSha", "")[:7],
+                                time_str,
+                            ]
+                        )
+                    return rows
+                except (json.JSONDecodeError, KeyError):
+                    return []
+
             # Event Bindings für GitHub Tab
             refresh_gh_status_btn.click(
                 fn=get_gh_status_display,
@@ -1765,6 +1993,38 @@ class KIWorkspaceApp:
             refresh_notifications_btn.click(
                 fn=get_gh_notifications,
                 outputs=gh_notifications_box,
+            )
+
+            # Git Status & Actions bindings
+            refresh_git_status_btn.click(
+                fn=get_git_status,
+                inputs=[project_dropdown],
+                outputs=git_status_box,
+            )
+
+            push_sync_btn.click(
+                fn=push_and_sync,
+                inputs=[project_dropdown],
+                outputs=[push_sync_output, git_status_box],
+            )
+
+            refresh_actions_btn.click(
+                fn=get_github_actions,
+                inputs=[project_dropdown],
+                outputs=gh_actions_table,
+            )
+
+            # Auto-load Git Status and Actions on project change
+            project_dropdown.change(
+                fn=get_git_status,
+                inputs=[project_dropdown],
+                outputs=git_status_box,
+            )
+
+            project_dropdown.change(
+                fn=get_github_actions,
+                inputs=[project_dropdown],
+                outputs=gh_actions_table,
             )
 
             refresh_prs_btn.click(
