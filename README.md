@@ -1,5 +1,7 @@
 # KI-CLI Workspace
 
+> Hinweis: Dieses Repository ist ein Hobby-/Experimentierprojekt. Es handelt sich nicht um ein gewerbliches Angebot (keine Auftragsannahme, keine Garantien, kein Supportversprechen).
+
 KI-übergreifendes Workspace-Tool für Issue-Management und Prozessdokumentation.
 
 ## Features
