@@ -309,6 +309,7 @@ class KIWorkspaceApp:
                     interactive=True,
                     scale=3,
                 )
+                refresh_dropdown_btn = gr.Button("🔄", size="sm", min_width=40)
 
             with gr.Tabs():
                 # === Dashboard Tab ===
@@ -2490,6 +2491,13 @@ class KIWorkspaceApp:
                 ],
                 outputs=[add_project_status, projects_table],
             ).then(
+                fn=refresh_project_dropdown,
+                inputs=[show_archived_toggle],
+                outputs=[project_dropdown],
+            )
+
+            # Globaler Refresh-Button für Projekt-Dropdown
+            refresh_dropdown_btn.click(
                 fn=refresh_project_dropdown,
                 inputs=[show_archived_toggle],
                 outputs=[project_dropdown],
