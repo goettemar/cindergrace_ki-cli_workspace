@@ -1537,7 +1537,7 @@ class KIWorkspaceApp:
                 from core.project_init import ProjectInitializer
 
                 initializer = ProjectInitializer(self.db)
-                result = initializer.archive_project(project_id, delete_github=True)
+                result = initializer.archive_project(project_id)
 
                 if result["success"]:
                     steps = "\n".join(result["steps"])
@@ -2353,7 +2353,8 @@ class KIWorkspaceApp:
                 except Exception as e:
                     return f"❌ Fehler: {e}", load_projects_table(show_archived)
 
-            def archive_project(project_id, show_archived):
+            def archive_project_db(project_id, show_archived):
+                """Archiviert ein Projekt nur in der Datenbank (ohne Dateisystem)."""
                 if not project_id:
                     return "❌ Keine Projekt-ID angegeben", load_projects_table(show_archived)
                 try:
@@ -2456,7 +2457,7 @@ class KIWorkspaceApp:
             )
 
             archive_btn.click(
-                fn=archive_project,
+                fn=archive_project_db,
                 inputs=[action_project_id, show_archived_toggle],
                 outputs=[project_action_status, projects_table],
             ).then(

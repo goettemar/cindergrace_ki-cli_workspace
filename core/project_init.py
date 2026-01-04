@@ -553,7 +553,7 @@ class ProjectInitializer:
         package_name = name.replace("_", "-")
 
         # Template-Variablen
-        vars = {
+        template_vars = {
             "name": name,
             "module_name": module_name,
             "package_name": package_name,
@@ -569,13 +569,17 @@ class ProjectInitializer:
         (path / "tests").mkdir()
 
         # Dateien erstellen
-        (path / "README.md").write_text(README_TEMPLATE.format(**vars), encoding="utf-8")
-        (path / "CHANGELOG.md").write_text(CHANGELOG_TEMPLATE.format(**vars), encoding="utf-8")
+        (path / "README.md").write_text(README_TEMPLATE.format(**template_vars), encoding="utf-8")
+        (path / "CHANGELOG.md").write_text(
+            CHANGELOG_TEMPLATE.format(**template_vars), encoding="utf-8"
+        )
         (path / "LICENSE").write_text(POLYFORM_NC_LICENSE, encoding="utf-8")
         (path / ".gitignore").write_text(GITIGNORE_PYTHON, encoding="utf-8")
-        (path / "pyproject.toml").write_text(PYPROJECT_TEMPLATE.format(**vars), encoding="utf-8")
+        (path / "pyproject.toml").write_text(
+            PYPROJECT_TEMPLATE.format(**template_vars), encoding="utf-8"
+        )
         (path / "src" / module_name / "__init__.py").write_text(
-            INIT_PY_TEMPLATE.format(**vars), encoding="utf-8"
+            INIT_PY_TEMPLATE.format(**template_vars), encoding="utf-8"
         )
         (path / "tests" / "__init__.py").write_text("", encoding="utf-8")
         (path / "tests" / f"test_{module_name}.py").write_text(
@@ -583,9 +587,13 @@ class ProjectInitializer:
             encoding="utf-8",
         )
         # Projekt-FAQ für KI-Assistenten
-        (path / ".ki-faq.json").write_text(PROJECT_FAQ_TEMPLATE.format(**vars), encoding="utf-8")
+        (path / ".ki-faq.json").write_text(
+            PROJECT_FAQ_TEMPLATE.format(**template_vars), encoding="utf-8"
+        )
         # AGENTS.md für Codex CLI und andere KI-Assistenten
-        (path / "AGENTS.md").write_text(AGENTS_MD_TEMPLATE.format(**vars), encoding="utf-8")
+        (path / "AGENTS.md").write_text(
+            AGENTS_MD_TEMPLATE.format(**template_vars), encoding="utf-8"
+        )
 
     def _init_git(self, path: Path) -> None:
         """Initialisiert Git Repository."""
