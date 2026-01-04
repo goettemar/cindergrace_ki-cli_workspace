@@ -1783,13 +1783,13 @@ class KIWorkspaceApp:
                 if not project_id:
                     return "*Projekt auswählen*"
                 project = self.db.get_project(project_id)
-                if not project or not project.local_path:
+                if not project or not project.path:
                     return "❌ Kein lokaler Pfad"
 
                 import subprocess
                 from pathlib import Path
 
-                path = Path(project.local_path)
+                path = Path(project.path)
                 if not path.exists():
                     return f"❌ Pfad existiert nicht: {path}"
                 if not (path / ".git").exists():
@@ -1849,13 +1849,13 @@ class KIWorkspaceApp:
                 if not project_id:
                     return "❌ Kein Projekt ausgewählt", "*Projekt auswählen*"
                 project = self.db.get_project(project_id)
-                if not project or not project.local_path:
+                if not project or not project.path:
                     return "❌ Kein lokaler Pfad", "❌ Kein lokaler Pfad"
 
                 import subprocess
                 from pathlib import Path
 
-                path = Path(project.local_path)
+                path = Path(project.path)
                 if not path.exists() or not (path / ".git").exists():
                     return "❌ Kein Git-Repository", "❌ Kein Git-Repository"
 
@@ -1921,7 +1921,9 @@ class KIWorkspaceApp:
                 if not project_id:
                     return []
                 project = self.db.get_project(project_id)
-                if not project or not project.provider or not project.provider_org:
+                # Use github_owner or codacy_org for the owner
+                owner = project.github_owner or project.codacy_org if project else None
+                if not project or not owner:
                     return []
 
                 import json
@@ -1932,7 +1934,7 @@ class KIWorkspaceApp:
                     "run",
                     "list",
                     "-R",
-                    f"{project.provider_org}/{project.name}",
+                    f"{owner}/{project.name}",
                     "--limit",
                     "3",
                     "--json",
