@@ -355,8 +355,8 @@ class KIWorkspaceApp:
                             "🟡 Med",
                             "🟢 Low",
                             "FP",
+                            "CI",
                             "Release",
-                            "Status",
                             "Sync",
                         ],
                         datatype=[
@@ -578,55 +578,59 @@ class KIWorkspaceApp:
                 with gr.Tab("🐙 GitHub"):
                     gr.Markdown("### GitHub Status")
 
+                    # Obere Reihe: 3 Spalten
                     with gr.Row():
+                        # Links: Aktualisieren + gh CLI Status
                         with gr.Column(scale=1):
+                            refresh_github_all_btn = gr.Button(
+                                "🔄 Aktualisieren", variant="primary", size="lg"
+                            )
                             gr.Markdown("#### gh CLI Status")
                             gh_cli_status_box = gr.Markdown()
-                            refresh_gh_status_btn = gr.Button("🔄 Status aktualisieren")
 
+                        # Mitte: Push & Sync + Git Status + Änderungen
                         with gr.Column(scale=1):
-                            gr.Markdown("#### 📂 Git Status (Projekt)")
-                            git_status_box = gr.Markdown("*Projekt auswählen*")
+                            commit_msg_input = gr.Textbox(
+                                label="Commit Message",
+                                placeholder="Änderungen beschreiben...",
+                                lines=1,
+                                max_lines=2,
+                            )
                             with gr.Row():
-                                refresh_git_status_btn = gr.Button("🔄 Aktualisieren", scale=1)
-                                push_sync_btn = gr.Button(
-                                    "🚀 Push & Sync", variant="primary", scale=1
-                                )
-                            push_sync_output = gr.Markdown("")
+                                push_sync_btn = gr.Button("🚀 Push & Sync", variant="secondary")
+                                push_sync_output = gr.Markdown("")
+                            gr.Markdown("#### 📂 Git Status")
+                            git_status_box = gr.Markdown("*Projekt auswählen*")
+                            gr.Markdown("#### 📝 Änderungen")
+                            git_changes_box = gr.Textbox(
+                                value="*Projekt auswählen*",
+                                lines=8,
+                                max_lines=20,
+                                interactive=False,
+                                show_label=False,
+                            )
 
+                        # Rechts: Notifications
                         with gr.Column(scale=1):
-                            gr.Markdown("#### Notifications")
-                            gh_notifications_box = gr.Markdown()
-                            refresh_notifications_btn = gr.Button("🔄 Notifications laden")
+                            gr.Markdown("#### 🔔 Notifications")
+                            gh_notifications_box = gr.Textbox(
+                                value="",
+                                lines=10,
+                                max_lines=20,
+                                interactive=False,
+                                show_label=False,
+                            )
 
                     gr.Markdown("---")
-                    gr.Markdown("#### ⚡ GitHub Actions (letzte 3)")
+                    gr.Markdown("#### ⚡ GitHub Actions (letzte 5)")
 
-                    with gr.Row():
-                        gh_actions_table = gr.Dataframe(
-                            headers=["Status", "Workflow", "Branch", "Commit", "Zeit"],
-                            datatype=["str", "str", "str", "str", "str"],
-                            interactive=False,
-                            row_count=3,
-                        )
-                        refresh_actions_btn = gr.Button("🔄 Actions laden", scale=0)
-
-                    gr.Markdown("---")
-                    gr.Markdown("#### Meine Pull Requests")
-
-                    with gr.Row():
-                        pr_filter = gr.Radio(
-                            choices=["Offen", "Erstellt von mir", "Review angefragt"],
-                            value="Offen",
-                            label="Filter",
-                        )
-                        refresh_prs_btn = gr.Button("🔄 PRs laden")
-
-                    gh_prs_table = gr.Dataframe(
-                        headers=["Repo", "Titel", "Status", "Erstellt", "URL"],
+                    gh_actions_table = gr.Dataframe(
+                        headers=["Status", "Workflow", "Branch", "Commit", "Zeit"],
                         datatype=["str", "str", "str", "str", "str"],
                         interactive=False,
+                        row_count=5,
                     )
+                    gh_actions_debug = gr.Markdown("")  # Debug-Ausgabe
 
                     gr.Markdown("---")
                     gr.Markdown("#### gh CLI Befehl ausführen")
@@ -1269,6 +1273,47 @@ class KIWorkspaceApp:
 
             # === Dashboard Event Handlers ===
 
+            def get_last_ci_status(owner: str, repo: str) -> str:
+                """Holt den Status der letzten GitHub Action."""
+                if not owner or not repo:
+                    return "-"
+                import json
+
+                cmd = [
+                    "run",
+                    "list",
+                    "-R",
+                    f"{owner}/{repo}",
+                    "--limit",
+                    "1",
+                    "--json",
+                    "status,conclusion",
+                ]
+                success, output = run_gh_command(cmd, timeout=10)
+                if not success or not output or output.strip() == "[]":
+                    return "-"
+
+                try:
+                    runs = json.loads(output)
+                    if not runs:
+                        return "-"
+                    run = runs[0]
+                    conclusion = run.get("conclusion", "")
+                    status = run.get("status", "")
+
+                    if conclusion == "success":
+                        return "✅"
+                    elif conclusion == "failure":
+                        return "❌"
+                    elif status == "in_progress":
+                        return "🔄"
+                    elif status == "queued":
+                        return "⏳"
+                    else:
+                        return "⚪"
+                except (json.JSONDecodeError, KeyError):
+                    return "-"
+
             def load_dashboard_data():
                 """Lädt alle Projekte mit gecachten Stats für das Dashboard."""
                 projects = self.db.get_all_projects(include_archived=False)
@@ -1279,13 +1324,19 @@ class KIWorkspaceApp:
                     # Phase-Name
                     phase_name = phases.get(p.phase_id, "-") if p.phase_id else "-"
 
+                    # CI Status (letzte GitHub Action)
+                    owner = p.github_owner or p.codacy_org
+                    ci_status = get_last_ci_status(owner, p.name) if owner else "-"
+
                     # Release Status
                     if p.cache_release_total > 0:
                         release_str = f"{p.cache_release_passed}/{p.cache_release_total}"
-                        status = "✅" if p.cache_release_ready else "⚠️"
+                        if p.cache_release_ready:
+                            release_str = f"✅ {release_str}"
+                        else:
+                            release_str = f"⚠️ {release_str}"
                     else:
                         release_str = "-"
-                        status = "❓"
 
                     # Sync-Zeit formatieren
                     sync_str = str(p.last_sync)[:16].replace("T", " ") if p.last_sync else "nie"
@@ -1300,8 +1351,8 @@ class KIWorkspaceApp:
                             p.cache_issues_medium,
                             p.cache_issues_low,
                             p.cache_issues_fp,
+                            ci_status,
                             release_str,
-                            status,
                             sync_str,
                         ]
                     )
@@ -1703,68 +1754,11 @@ class KIWorkspaceApp:
                     return f"❌ Fehler: {output}"
                 if not output.strip():
                     return "✅ Keine neuen Notifications"
-                lines = output.strip().split("\n")[:10]  # Max 10
-                return "**Neueste Notifications:**\n\n" + "\n".join(f"• {line}" for line in lines)
-
-            def get_gh_prs(filter_type):
-                """Lädt Pull Requests nach Filter."""
-                if filter_type == "Offen":
-                    cmd = [
-                        "pr",
-                        "list",
-                        "--state",
-                        "open",
-                        "--limit",
-                        "20",
-                        "--json",
-                        "repository,title,state,createdAt,url",
-                    ]
-                elif filter_type == "Erstellt von mir":
-                    cmd = [
-                        "pr",
-                        "list",
-                        "--author",
-                        "@me",
-                        "--state",
-                        "all",
-                        "--limit",
-                        "20",
-                        "--json",
-                        "repository,title,state,createdAt,url",
-                    ]
-                else:  # Review angefragt
-                    cmd = [
-                        "pr",
-                        "list",
-                        "--search",
-                        "review-requested:@me",
-                        "--state",
-                        "open",
-                        "--limit",
-                        "20",
-                        "--json",
-                        "repository,title,state,createdAt,url",
-                    ]
-
-                success, output = run_gh_command(cmd, timeout=30)
-                if not success:
-                    return []
-
-                try:
-                    import json
-
-                    prs = json.loads(output)
-                    rows = []
-                    for pr in prs:
-                        repo = pr.get("repository", {}).get("name", "?")
-                        title = pr.get("title", "")[:50]
-                        state = pr.get("state", "")
-                        created = pr.get("createdAt", "")[:10]
-                        url = pr.get("url", "")
-                        rows.append([repo, title, state, created, url])
-                    return rows
-                except (json.JSONDecodeError, KeyError):
-                    return []
+                lines = output.strip().split("\n")[:20]  # Max 20
+                result = "\n".join(f"• {line}" for line in lines)
+                if len(output.strip().split("\n")) > 20:
+                    result += f"\n... und {len(output.strip().split(chr(10))) - 20} weitere"
+                return result
 
             def run_custom_gh_command(cmd_str):
                 """Führt benutzerdefinierten gh Befehl aus."""
@@ -1791,7 +1785,7 @@ class KIWorkspaceApp:
 
                 path = Path(project.path)
                 if not path.exists():
-                    return f"❌ Pfad existiert nicht: {path}"
+                    return f"❌ Pfad: {path}"
                 if not (path / ".git").exists():
                     return "❌ Kein Git-Repository"
 
@@ -1844,8 +1838,65 @@ class KIWorkspaceApp:
                 except subprocess.SubprocessError as e:
                     return f"❌ Git-Fehler: {e}"
 
-            def push_and_sync(project_id: int | None):
-                """Führt git add, commit (falls nötig) und push aus."""
+            def get_git_changes_list(project_id: int | None):
+                """Holt Liste aller Änderungen für ein Projekt."""
+                if not project_id:
+                    return "*Projekt auswählen*"
+                project = self.db.get_project(project_id)
+                if not project or not project.path:
+                    return "Kein lokaler Pfad"
+
+                import subprocess
+                from pathlib import Path
+
+                path = Path(project.path)
+                if not path.exists() or not (path / ".git").exists():
+                    return "Kein Git-Repository"
+
+                try:
+                    # git status --porcelain liefert alle Änderungen
+                    result = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=path,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if not result.stdout.strip():
+                        return "✨ Keine Änderungen"
+
+                    changes = result.stdout.strip().split("\n")
+                    lines = []
+                    for change in changes[:20]:  # Max 20 Zeilen
+                        # Format: XY filename
+                        # X = staged, Y = unstaged
+                        status = change[:2]
+                        filename = change[3:]
+                        # Status Icons
+                        if status[0] == "M" or status[1] == "M":
+                            icon = "📝"  # Modified
+                        elif status[0] == "A":
+                            icon = "➕"  # Added
+                        elif status[0] == "D" or status[1] == "D":
+                            icon = "🗑️"  # Deleted
+                        elif status == "??":
+                            icon = "❓"  # Untracked
+                        elif status[0] == "R":
+                            icon = "📛"  # Renamed
+                        else:
+                            icon = "•"
+                        lines.append(f"{icon} {filename}")
+
+                    if len(changes) > 20:
+                        lines.append(f"... und {len(changes) - 20} weitere")
+
+                    return "\n".join(lines)
+
+                except subprocess.SubprocessError as e:
+                    return f"Fehler: {e}"
+
+            def push_and_sync(project_id: int | None, commit_message: str = ""):
+                """Führt git add, commit (falls nötig), pull --rebase und push aus."""
                 if not project_id:
                     return "❌ Kein Projekt ausgewählt", "*Projekt auswählen*"
                 project = self.db.get_project(project_id)
@@ -1858,6 +1909,10 @@ class KIWorkspaceApp:
                 path = Path(project.path)
                 if not path.exists() or not (path / ".git").exists():
                     return "❌ Kein Git-Repository", "❌ Kein Git-Repository"
+
+                # Default commit message wenn leer
+                if not commit_message or not commit_message.strip():
+                    commit_message = "Update via KI-Workspace"
 
                 messages = []
                 try:
@@ -1874,20 +1929,20 @@ class KIWorkspaceApp:
                     if has_changes:
                         # git add .
                         subprocess.run(["git", "add", "."], cwd=path, check=True, timeout=30)
-                        messages.append("✅ `git add .`")
+                        messages.append("✅ add")
 
-                        # git commit
+                        # git commit mit User-Message
                         result = subprocess.run(
-                            ["git", "commit", "-m", "Auto-commit via KI-Workspace"],
+                            ["git", "commit", "-m", commit_message],
                             cwd=path,
                             capture_output=True,
                             text=True,
                             timeout=30,
                         )
                         if result.returncode == 0:
-                            messages.append("✅ `git commit`")
+                            messages.append("✅ commit")
                         else:
-                            messages.append(f"⚠️ Commit: {result.stderr.strip()[:50]}")
+                            messages.append(f"⚠️ {result.stderr.strip()[:40]}")
 
                     # Check for unpushed
                     result = subprocess.run(
@@ -1900,16 +1955,44 @@ class KIWorkspaceApp:
                     unpushed = int(result.stdout.strip()) if result.returncode == 0 else 0
 
                     if unpushed > 0 or has_changes:
+                        # Erst git fetch um zu prüfen ob divergiert
+                        subprocess.run(["git", "fetch"], cwd=path, capture_output=True, timeout=30)
+
+                        # Prüfen ob divergiert
+                        result = subprocess.run(
+                            ["git", "status", "-sb"],
+                            cwd=path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+                        if "diverged" in result.stdout or "behind" in result.stdout:
+                            # git pull --rebase
+                            result = subprocess.run(
+                                ["git", "pull", "--rebase"],
+                                cwd=path,
+                                capture_output=True,
+                                text=True,
+                                timeout=60,
+                            )
+                            if result.returncode == 0:
+                                messages.append("✅ pull --rebase")
+                            else:
+                                return (
+                                    f"❌ Rebase-Konflikt: {result.stderr.strip()[:60]}",
+                                    get_git_status(project_id),
+                                )
+
                         # git push
                         result = subprocess.run(
                             ["git", "push"], cwd=path, capture_output=True, text=True, timeout=60
                         )
                         if result.returncode == 0:
-                            messages.append("✅ `git push`")
+                            messages.append("✅ push")
                         else:
-                            messages.append(f"❌ Push: {result.stderr.strip()[:80]}")
+                            messages.append(f"❌ {result.stderr.strip()[:60]}")
                     else:
-                        messages.append("✨ Bereits synchron")
+                        messages.append("✨ Synchron")
 
                     return " | ".join(messages), get_git_status(project_id)
 
@@ -1917,32 +2000,47 @@ class KIWorkspaceApp:
                     return f"❌ Fehler: {e}", get_git_status(project_id)
 
             def get_github_actions(project_id: int | None):
-                """Holt die letzten 3 GitHub Actions für ein Projekt."""
+                """Holt die letzten 5 GitHub Actions für ein Projekt."""
                 if not project_id:
-                    return []
+                    return [], "*Projekt auswählen*"
                 project = self.db.get_project(project_id)
                 # Use github_owner or codacy_org for the owner
                 owner = project.github_owner or project.codacy_org if project else None
                 if not project or not owner:
-                    return []
+                    return (
+                        [],
+                        f"❌ Kein Owner gefunden (github_owner={project.github_owner if project else None}, codacy_org={project.codacy_org if project else None})",
+                    )
 
                 import json
                 from datetime import datetime
+
+                repo_name = f"{owner}/{project.name}"
 
                 # gh run list
                 cmd = [
                     "run",
                     "list",
                     "-R",
-                    f"{owner}/{project.name}",
+                    repo_name,
                     "--limit",
-                    "3",
+                    "5",
                     "--json",
                     "status,conclusion,name,headBranch,headSha,createdAt",
                 ]
                 success, output = run_gh_command(cmd, timeout=30)
-                if not success or not output:
-                    return []
+
+                if not success:
+                    return (
+                        [],
+                        f"❌ gh Fehler für `{repo_name}`: {output[:100] if output else 'Keine Ausgabe'}",
+                    )
+
+                if not output or output.strip() == "[]":
+                    return (
+                        [],
+                        f"ℹ️ Keine Actions für `{repo_name}` (evtl. keine Workflows definiert)",
+                    )
 
                 try:
                     runs = json.loads(output)
@@ -1982,63 +2080,66 @@ class KIWorkspaceApp:
                                 time_str,
                             ]
                         )
-                    return rows
-                except (json.JSONDecodeError, KeyError):
-                    return []
+                    return rows, f"✅ {len(rows)} Actions für `{repo_name}`"
+                except (json.JSONDecodeError, KeyError) as e:
+                    return [], f"❌ JSON-Fehler: {e}"
+
+            # Kombinierte Refresh-Funktion für GitHub Tab
+            def refresh_all_github_data(project_id):
+                """Aktualisiert alle GitHub-Daten auf einmal."""
+                gh_status = get_gh_status_display()
+                git_status = get_git_status(project_id)
+                git_changes = get_git_changes_list(project_id)
+                notifications = get_gh_notifications()
+                actions_table, actions_debug = get_github_actions(project_id)
+                return (
+                    gh_status,
+                    git_status,
+                    git_changes,
+                    notifications,
+                    actions_table,
+                    actions_debug,
+                )
 
             # Event Bindings für GitHub Tab
-            refresh_gh_status_btn.click(
-                fn=get_gh_status_display,
-                outputs=gh_cli_status_box,
-            )
-
-            refresh_notifications_btn.click(
-                fn=get_gh_notifications,
-                outputs=gh_notifications_box,
-            )
-
-            # Git Status & Actions bindings
-            refresh_git_status_btn.click(
-                fn=get_git_status,
+            refresh_github_all_btn.click(
+                fn=refresh_all_github_data,
                 inputs=[project_dropdown],
-                outputs=git_status_box,
+                outputs=[
+                    gh_cli_status_box,
+                    git_status_box,
+                    git_changes_box,
+                    gh_notifications_box,
+                    gh_actions_table,
+                    gh_actions_debug,
+                ],
             )
 
             push_sync_btn.click(
                 fn=push_and_sync,
-                inputs=[project_dropdown],
+                inputs=[project_dropdown, commit_msg_input],
                 outputs=[push_sync_output, git_status_box],
-            )
-
-            refresh_actions_btn.click(
-                fn=get_github_actions,
+            ).then(
+                fn=get_git_changes_list,
                 inputs=[project_dropdown],
-                outputs=gh_actions_table,
+                outputs=git_changes_box,
+            ).then(
+                fn=lambda: "",  # Clear commit message after push
+                outputs=commit_msg_input,
             )
 
-            # Auto-load Git Status and Actions on project change
+            # Auto-load Git Status, Changes and Actions on project change
+            def on_project_change_github(project_id):
+                """Lädt alle GitHub-Daten bei Projektwechsel."""
+                git_status = get_git_status(project_id)
+                git_changes = get_git_changes_list(project_id)
+                actions_table, actions_debug = get_github_actions(project_id)
+                return git_status, git_changes, actions_table, actions_debug
+
             project_dropdown.change(
-                fn=get_git_status,
+                fn=on_project_change_github,
                 inputs=[project_dropdown],
-                outputs=git_status_box,
-            )
-
-            project_dropdown.change(
-                fn=get_github_actions,
-                inputs=[project_dropdown],
-                outputs=gh_actions_table,
-            )
-
-            refresh_prs_btn.click(
-                fn=get_gh_prs,
-                inputs=[pr_filter],
-                outputs=gh_prs_table,
-            )
-
-            pr_filter.change(
-                fn=get_gh_prs,
-                inputs=[pr_filter],
-                outputs=gh_prs_table,
+                outputs=[git_status_box, git_changes_box, gh_actions_table, gh_actions_debug],
             )
 
             run_gh_cmd_btn.click(
@@ -2342,6 +2443,7 @@ class KIWorkspaceApp:
                     get_codacy_token_status(),
                     load_projects_table(False),
                     get_gh_status_display(),
+                    get_gh_notifications(),
                 )
 
             app.load(
@@ -2351,6 +2453,7 @@ class KIWorkspaceApp:
                     token_status_box,
                     projects_table,
                     gh_cli_status_box,
+                    gh_notifications_box,
                 ],
             )
 
