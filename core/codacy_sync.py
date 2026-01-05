@@ -292,6 +292,7 @@ class CodacySync:
         }
 
         # 1. SRM Items (Security) holen - inkl. Ignored für False Positives
+        srm_items = []  # Initialize for deduplication
         try:
             srm_items = self.fetch_srm_items(
                 provider,
