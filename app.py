@@ -509,35 +509,19 @@ class KIWorkspaceApp:
                         interactive=False,
                     )
 
-                    # Details & Aktionen
-                    with gr.Row():
-                        with gr.Column(scale=2):
-                            gr.Markdown("### Issue Details")
-                            detail_title = gr.Textbox(label="Titel", interactive=False)
-                            detail_message = gr.Textbox(label="Meldung", interactive=False, lines=3)
-                            detail_file = gr.Textbox(label="Datei", interactive=False)
-                            detail_tool = gr.Textbox(label="Tool/Rule", interactive=False)
-                            detail_cve = gr.Textbox(
-                                label="CVE Info", interactive=False, visible=True
-                            )
-                            detail_fp = gr.Textbox(
-                                label="False Positive Status", interactive=False, lines=4
-                            )
+                    # Issue Details
+                    gr.Markdown("### Issue Details")
+                    detail_title = gr.Textbox(label="Titel", interactive=False)
+                    detail_message = gr.Textbox(label="Meldung", interactive=False, lines=3)
+                    detail_file = gr.Textbox(label="Datei", interactive=False)
+                    detail_tool = gr.Textbox(label="Tool/Rule", interactive=False)
+                    detail_cve = gr.Textbox(label="CVE Info", interactive=False, visible=True)
+                    detail_fp = gr.Textbox(
+                        label="False Positive Status", interactive=False, lines=4
+                    )
 
-                        with gr.Column(scale=1):
-                            gr.Markdown("### Aktionen")
-                            selected_issue_id = gr.Number(
-                                label="Ausgewählte Issue ID", visible=True
-                            )
-                            fp_reason = gr.Textbox(
-                                label="False Positive Begründung",
-                                placeholder="z.B.: Whitelist-Pattern, nur Test-Code...",
-                                lines=3,
-                            )
-                            mark_fp_btn = gr.Button(
-                                "✅ Als False Positive markieren", variant="primary"
-                            )
-                            fp_result = gr.Textbox(label="Ergebnis", interactive=False)
+                    # Hidden: Issue ID für Event-Handler
+                    selected_issue_id = gr.Number(visible=False)
 
                 # === Pending Ignores Tab (KI-Empfehlungen) ===
                 with gr.Tab("📋 Pending Ignores"):
@@ -1418,17 +1402,6 @@ class KIWorkspaceApp:
                     detail_cve,
                     detail_fp,
                 ],
-            )
-
-            # False Positive markieren
-            mark_fp_btn.click(
-                fn=self.mark_as_false_positive,
-                inputs=[selected_issue_id, fp_reason],
-                outputs=fp_result,
-            ).then(
-                fn=update_issues,
-                inputs=filter_inputs,
-                outputs=issues_table,
             )
 
             # Sync Button - mit automatischem Refresh der Issues-Tabelle
