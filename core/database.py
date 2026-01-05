@@ -713,6 +713,11 @@ class DatabaseManager:
                 '["/temp", "*.log", ".env.local", ".env", ".venv", "*.pem", "*.key", "*.db", "state.json", "credentials.json", "*_cache.json"]',
                 "JSON-Array mit Patterns die in .gitignore sein muessen",
             ),
+            (
+                "openrouter_model",
+                "x-ai/grok-3-mini-beta",
+                "OpenRouter Model fuer AI Commit Messages",
+            ),
         ]
 
         for key, value, desc in settings:

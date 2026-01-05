@@ -872,6 +872,56 @@ class KIWorkspaceApp:
 
                             token_save_result = gr.Markdown()
 
+                            gr.Markdown("---")
+
+                            # OpenRouter Token
+                            gr.Markdown("## OpenRouter API Key")
+                            gr.Markdown(
+                                "Für AI Commit Messages. "
+                                "[→ Key erstellen](https://openrouter.ai/keys)"
+                            )
+                            openrouter_token_status = gr.Markdown()
+
+                            with gr.Row():
+                                openrouter_token_input = gr.Textbox(
+                                    label="OpenRouter Key",
+                                    type="password",
+                                    placeholder="sk-or-v1-...",
+                                    scale=4,
+                                )
+                                save_openrouter_btn = gr.Button(
+                                    "💾 Speichern", variant="primary", scale=1
+                                )
+
+                            openrouter_save_result = gr.Markdown()
+
+                            # OpenRouter Model
+                            gr.Markdown("### AI Commit Model")
+                            with gr.Row():
+                                openrouter_model_dropdown = gr.Dropdown(
+                                    label="Model",
+                                    choices=[
+                                        (
+                                            "Grok 3 Mini (schnell, guenstig)",
+                                            "x-ai/grok-3-mini-beta",
+                                        ),
+                                        ("Grok 3 (beste Qualitaet)", "x-ai/grok-3-beta"),
+                                        ("Grok 2", "x-ai/grok-2-1212"),
+                                        ("Claude Sonnet 4", "anthropic/claude-sonnet-4"),
+                                        ("GPT-4o Mini", "openai/gpt-4o-mini"),
+                                        ("GPT-4o", "openai/gpt-4o"),
+                                        ("Gemini 2.0 Flash", "google/gemini-2.0-flash-001"),
+                                    ],
+                                    value=self.db.get_setting("openrouter_model")
+                                    or "x-ai/grok-3-mini-beta",
+                                    scale=4,
+                                )
+                                save_model_btn = gr.Button(
+                                    "💾 Speichern", variant="primary", scale=1
+                                )
+
+                            model_save_result = gr.Markdown()
+
                         # --- Projekte ---
                         with gr.Tab("📁 Projekte"):
                             # GitHub Import
@@ -2632,6 +2682,41 @@ class KIWorkspaceApp:
                 self.codacy.set_api_token(token.strip())
                 return "✅ Codacy Token gespeichert!", get_codacy_token_status()
 
+            # --- OpenRouter ---
+            def get_openrouter_token_status():
+                """Gibt formatierten OpenRouter Token-Status zurück."""
+                token = self.db.get_setting("openrouter_api_key")
+                if token:
+                    masked = token[:8] + "..." + token[-4:] if len(token) > 14 else "***"
+                    return (
+                        f"### ✅ Key konfiguriert\n\n"
+                        f"**Gespeicherter Key:** `{masked}`\n\n"
+                        f"*Verschlüsselt in der Datenbank gespeichert.*"
+                    )
+                return "### ❌ Kein Key konfiguriert"
+
+            def save_openrouter_token(token):
+                if not token or not token.strip():
+                    return "❌ Bitte Key eingeben", get_openrouter_token_status()
+                self.db.set_setting(
+                    "openrouter_api_key",
+                    token.strip(),
+                    encrypt=True,
+                    description="OpenRouter API Key",
+                )
+                return "✅ OpenRouter Key gespeichert!", get_openrouter_token_status()
+
+            def save_openrouter_model(model):
+                if not model:
+                    return "❌ Kein Model ausgewählt"
+                self.db.set_setting(
+                    "openrouter_model",
+                    model,
+                    encrypt=False,
+                    description="OpenRouter Model für AI Commits",
+                )
+                return f"✅ Model gespeichert: {model}"
+
             # --- Projekte Tabelle ---
             def load_projects_table(show_archived=False):
                 """Lädt Projekte für Tabelle."""
@@ -2795,6 +2880,20 @@ class KIWorkspaceApp:
                 outputs=[token_save_result, token_status_box],
             )
 
+            # OpenRouter Token speichern
+            save_openrouter_btn.click(
+                fn=save_openrouter_token,
+                inputs=[openrouter_token_input],
+                outputs=[openrouter_save_result, openrouter_token_status],
+            )
+
+            # OpenRouter Model speichern
+            save_model_btn.click(
+                fn=save_openrouter_model,
+                inputs=[openrouter_model_dropdown],
+                outputs=[model_save_result],
+            )
+
             # GitHub Import
             load_github_btn.click(
                 fn=load_repos_from_github,
@@ -2886,6 +2985,7 @@ class KIWorkspaceApp:
                 return (
                     get_github_token_status(),
                     get_codacy_token_status(),
+                    get_openrouter_token_status(),
                     load_projects_table(False),
                     get_gh_status_display(),
                     get_gh_notifications(),
@@ -2896,6 +2996,7 @@ class KIWorkspaceApp:
                 outputs=[
                     github_token_status,
                     token_status_box,
+                    openrouter_token_status,
                     projects_table,
                     gh_cli_status_box,
                     gh_notifications_box,

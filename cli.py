@@ -576,5 +576,158 @@ def faq(
             console.print()
 
 
+# === AI Commit Command ===
+
+
+@app.command()
+def commit(
+    auto: bool = typer.Option(
+        False, "--auto", "-a", help="Automatisch committen ohne Bestaetigung"
+    ),
+    model: str = typer.Option("", "--model", "-m", help="OpenRouter Model (ueberschreibt Setting)"),
+    repo_path: str = typer.Option(".", "--path", "-p", help="Repository Pfad"),
+):
+    """
+    Generiert AI-powered Commit Message aus staged Changes.
+
+    Nutzt OpenRouter API mit konfigurierbarem Model (z.B. Grok).
+    Staged Changes werden analysiert und eine Conventional Commit Message erstellt.
+    """
+    from core.ai_commit import (
+        DEFAULT_MODEL,
+        ai_commit,
+        create_commit,
+        get_staged_diff,
+    )
+
+    db = get_db()
+
+    # API Key holen
+    api_key = db.get_setting("openrouter_api_key", decrypt=True)
+    if not api_key:
+        console.print("❌ [bold red]OpenRouter API Key nicht konfiguriert![/bold red]")
+        console.print("\nSetze den Key via:")
+        console.print("  - Web UI: Einstellungen > API Keys > OpenRouter")
+        console.print("  - CLI: ki-workspace set-key openrouter <KEY>")
+        sys.exit(1)
+
+    # Model holen (Parameter > Setting > Default)
+    if not model:
+        model = db.get_setting("openrouter_model") or DEFAULT_MODEL
+
+    # Pruefen ob staged changes existieren
+    success, diff_or_error = get_staged_diff(repo_path if repo_path != "." else None)
+    if not success:
+        console.print(f"❌ {diff_or_error}", style="red")
+        sys.exit(1)
+
+    console.print("\n🤖 [bold]AI Commit Generator[/bold]")
+    console.print(f"   Model: [cyan]{model}[/cyan]\n")
+
+    # Commit Message generieren
+    with console.status("[bold blue]Generiere Commit Message...[/bold blue]"):
+        result = ai_commit(
+            api_key=api_key,
+            model=model,
+            repo_path=repo_path if repo_path != "." else None,
+            auto_confirm=False,  # Immer erst anzeigen
+        )
+
+    if not result.success:
+        console.print(f"❌ {result.message}", style="red")
+        sys.exit(1)
+
+    # Ergebnis anzeigen
+    console.print(f"📝 [bold]Diff:[/bold] {result.diff_summary}\n")
+    console.print("[bold green]Generierte Commit Message:[/bold green]")
+    console.print("─" * 50)
+    console.print(result.message)
+    console.print("─" * 50)
+
+    # Bei --auto direkt committen
+    if auto:
+        success, output = create_commit(
+            result.message,
+            repo_path if repo_path != "." else None,
+        )
+        if success:
+            console.print("\n✅ [bold green]Commit erstellt![/bold green]")
+        else:
+            console.print(f"\n❌ {output}", style="red")
+            sys.exit(1)
+        return
+
+    # User fragen
+    console.print()
+    action = typer.prompt(
+        "Was moechtest du tun?",
+        type=str,
+        default="c",
+        show_default=True,
+        prompt_suffix="\n  [c]ommit  [e]dit  [a]bbrechen: ",
+    )
+
+    if action.lower() in ("c", "commit", "y", "yes", "j", "ja"):
+        success, output = create_commit(
+            result.message,
+            repo_path if repo_path != "." else None,
+        )
+        if success:
+            console.print("\n✅ [bold green]Commit erstellt![/bold green]")
+        else:
+            console.print(f"\n❌ {output}", style="red")
+            sys.exit(1)
+
+    elif action.lower() in ("e", "edit"):
+        console.print("\n[dim]Editiere die Message und druecke Enter (leere Zeile = fertig):[/dim]")
+        edited_message = typer.edit(result.message)
+        if edited_message and edited_message.strip():
+            success, output = create_commit(
+                edited_message.strip(),
+                repo_path if repo_path != "." else None,
+            )
+            if success:
+                console.print("\n✅ [bold green]Commit erstellt![/bold green]")
+            else:
+                console.print(f"\n❌ {output}", style="red")
+                sys.exit(1)
+        else:
+            console.print("\n⚠️ Abgebrochen (keine Message)")
+
+    else:
+        console.print("\n⚠️ Abgebrochen")
+
+
+@app.command(name="set-key")
+def set_key(
+    key_type: str = typer.Argument(..., help="Key-Typ: codacy, github, openrouter"),
+    value: str = typer.Argument(..., help="API Key Wert"),
+):
+    """
+    Speichert einen API Key (verschluesselt).
+
+    Beispiele:
+      ki-workspace set-key openrouter sk-or-v1-xxx
+      ki-workspace set-key codacy xxx
+      ki-workspace set-key github ghp_xxx
+    """
+    db = get_db()
+
+    key_mapping = {
+        "codacy": ("codacy_api_token", "Codacy API Token"),
+        "github": ("github_token", "GitHub Token"),
+        "openrouter": ("openrouter_api_key", "OpenRouter API Key"),
+    }
+
+    if key_type.lower() not in key_mapping:
+        console.print(f"❌ Unbekannter Key-Typ: {key_type}", style="red")
+        console.print(f"Verfuegbar: {', '.join(key_mapping.keys())}")
+        sys.exit(1)
+
+    setting_key, description = key_mapping[key_type.lower()]
+    db.set_setting(setting_key, value, encrypt=True, description=description)
+    console.print(f"✅ [bold green]{description} gespeichert (verschluesselt)[/bold green]")
+
+
 if __name__ == "__main__":
     app()
