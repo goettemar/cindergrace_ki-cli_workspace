@@ -269,7 +269,10 @@ class CodacySync:
         org = project.codacy_org
         repo = project.name
 
-        stats = {"srm": 0, "quality": 0, "errors": []}
+        stats = {"srm": 0, "quality": 0, "errors": [], "removed": 0}
+
+        # Alle sync'ten external_ids sammeln (fuer Cleanup)
+        synced_external_ids: set[str] = set()
 
         # Status-Mapping
         status_map = {
@@ -327,6 +330,9 @@ class CodacySync:
                 )
                 db.upsert_issue(issue)
                 stats["srm"] += 1
+                # Track external_id fuer Cleanup
+                if issue.external_id:
+                    synced_external_ids.add(issue.external_id)
         except Exception as e:
             logger.error(f"SRM-Sync Fehler: {e}")
             stats["errors"].append(f"SRM: {e}")
@@ -376,30 +382,24 @@ class CodacySync:
                 )
                 db.upsert_issue(issue)
                 stats["quality"] += 1
+                # Track external_id fuer Cleanup
+                if issue.external_id:
+                    synced_external_ids.add(issue.external_id)
         except Exception as e:
             logger.error(f"Quality-Sync Fehler: {e}")
             stats["errors"].append(f"Quality: {e}")
 
-        # 3. Geschlossene Issues aus Codacy holen und lokal bereinigen
+        # 3. Lokale Issues entfernen die nicht mehr in Codacy existieren
+        # (z.B. weil der Code gefixt wurde)
         try:
-            closed_items = self.fetch_srm_items(
-                provider,
-                org,
-                repo,
-                statuses=["ClosedOnTime", "ClosedLate", "Ignored"],
-            )
-            closed_ids = {item.get("id") for item in closed_items if item.get("id")}
-
-            if closed_ids:
-                # Lösche lokale Issues die in Codacy geschlossen sind
-                deleted = db.delete_issues_by_external_ids(project.id, list(closed_ids))
-                stats["cleaned"] = deleted
-
-                # Lösche auch Pending Ignores für diese Issues
-                cleaned_pending = db.clean_pending_ignores_by_external_ids(
-                    project.id, list(closed_ids)
-                )
-                stats["cleaned_pending"] = cleaned_pending
+            if synced_external_ids:
+                removed = db.delete_issues_not_in_list(project.id, synced_external_ids)
+                stats["removed"] = removed
+                if removed > 0:
+                    logger.info(f"Cleanup: {removed} veraltete Issues entfernt")
+            else:
+                # Keine Issues von Codacy = alle lokal entfernen
+                logger.info("Keine Issues von Codacy - ueberspringe Cleanup")
         except Exception as e:
             logger.error(f"Cleanup-Fehler: {e}")
             stats["errors"].append(f"Cleanup: {e}")

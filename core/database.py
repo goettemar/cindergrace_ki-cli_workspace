@@ -963,6 +963,35 @@ class DatabaseManager:
             conn.commit()
             return cursor.rowcount
 
+    def delete_issues_not_in_list(self, project_id: int, keep_external_ids: set[str]) -> int:
+        """
+        Delete issues whose external_id is NOT in the provided set.
+
+        Used during sync to remove issues that no longer exist in Codacy
+        (e.g., code was fixed).
+
+        Returns:
+            Number of deleted issues.
+        """
+        with self._get_connection() as conn:
+            if not keep_external_ids:
+                # Keine IDs zum Behalten = alle loeschen
+                cursor = conn.execute(
+                    "DELETE FROM issue_meta WHERE project_id = ?",
+                    (project_id,),
+                )
+            else:
+                placeholders = ",".join("?" * len(keep_external_ids))
+                cursor = conn.execute(
+                    f"""
+                    DELETE FROM issue_meta
+                    WHERE project_id = ? AND external_id NOT IN ({placeholders})
+                    """,
+                    [project_id, *keep_external_ids],
+                )
+            conn.commit()
+            return cursor.rowcount
+
     def clean_pending_ignores_by_external_ids(
         self, project_id: int, external_ids: list[str]
     ) -> int:
