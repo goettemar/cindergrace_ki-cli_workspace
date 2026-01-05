@@ -549,11 +549,17 @@ class KIWorkspaceApp:
                             )
                         detail_category_hint = gr.Markdown("")
 
-                        detail_reason = gr.Textbox(
-                            label="📋 Begründung (in Codacy einfügen)",
-                            lines=4,
-                            interactive=False,
-                        )
+                        with gr.Row():
+                            detail_reason = gr.Textbox(
+                                label="📋 Begründung (in Codacy einfügen)",
+                                lines=4,
+                                interactive=False,
+                                scale=9,
+                            )
+                            copy_reason_btn = gr.Button(
+                                "📋", scale=1, min_width=50, variant="secondary"
+                            )
+                        copy_result = gr.Markdown("")
 
                     gr.Markdown("---")
                     gr.Markdown(
@@ -1271,6 +1277,19 @@ class KIWorkspaceApp:
                 fn=show_pending_detail_by_id,
                 inputs=[pending_ignores_table],
                 outputs=[detail_issue_info, detail_category, detail_category_hint, detail_reason],
+            )
+
+            def copy_to_clipboard(text: str) -> str:
+                """Copy text to clipboard (feedback only, JS does the actual copy)."""
+                if not text or text.startswith("*"):
+                    return "❌ Nichts zum Kopieren"
+                return "✅ Kopiert!"
+
+            copy_reason_btn.click(
+                fn=copy_to_clipboard,
+                inputs=[detail_reason],
+                outputs=[copy_result],
+                js="(text) => { if(text && !text.startsWith('*')) { navigator.clipboard.writeText(text); } return text; }",
             )
 
             # === Dashboard Event Handlers ===
