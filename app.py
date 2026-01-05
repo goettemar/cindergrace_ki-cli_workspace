@@ -408,10 +408,19 @@ class KIWorkspaceApp:
                                     "📦 Archiv", size="sm", variant="stop", min_width=80
                                 )
 
-                        # Info-Zeile: Pfad, GitHub, Codacy kompakt
-                        dash_detail_info = gr.Markdown("*Wähle ein Projekt*")
-
                         # Tabellarisches Layout: Label | Status | (Reserve)
+                        with gr.Row():
+                            gr.Markdown("**📁 Pfad**")
+                            dash_info_path = gr.Markdown("*-*")
+                            gr.Markdown("")
+                        with gr.Row():
+                            gr.Markdown("**🔗 GitHub**")
+                            dash_info_github = gr.Markdown("*-*")
+                            gr.Markdown("")
+                        with gr.Row():
+                            gr.Markdown("**📊 Codacy**")
+                            dash_info_codacy = gr.Markdown("*-*")
+                            gr.Markdown("")
                         with gr.Row():
                             gr.Markdown("**✓ Release Check**")
                             dash_release_info = gr.Markdown("*-*")
@@ -1673,7 +1682,9 @@ class KIWorkspaceApp:
                     return (
                         gr.update(visible=False),
                         "",
-                        "*Kein Projekt ausgewählt*",
+                        "*-*",
+                        "*-*",
+                        "*-*",
                         "*Keine*",
                         "*Keine*",
                         "*-*",
@@ -1686,7 +1697,9 @@ class KIWorkspaceApp:
                     return (
                         gr.update(visible=False),
                         "",
-                        "*Projekt nicht gefunden*",
+                        "*-*",
+                        "*-*",
+                        "*-*",
                         "*Keine*",
                         "*Keine*",
                         "*-*",
@@ -1701,20 +1714,18 @@ class KIWorkspaceApp:
                     if phase:
                         phase_name = phase.display_name
 
-                # Kompakte Info-Zeile
-                path_short = (
-                    project.path.replace("/home/zorinadmin/projekte/", "~/")
+                # Info-Werte separat
+                path_info = (
+                    f"`{project.path.replace('/home/zorinadmin/projekte/', '~/')}`"
                     if project.path
-                    else "-"
+                    else "*-*"
                 )
-                git_short = (
-                    project.git_remote.replace("https://github.com/", "gh:").replace(".git", "")
+                github_info = (
+                    f"`{project.git_remote.replace('https://github.com/', '').replace('.git', '')}`"
                     if project.git_remote
-                    else "-"
+                    else "*-*"
                 )
-                codacy_short = f"{project.codacy_provider or '-'}/{project.codacy_org or '-'}"
-
-                info = f"📁 `{path_short}` · 🔗 `{git_short}` · 📊 `{codacy_short}`"
+                codacy_info = f"`{project.codacy_provider or '-'}/{project.codacy_org or '-'}`"
 
                 # Critical Issues laden (max 5, kompakt)
                 critical_issues = self.db.get_issues(
@@ -1769,7 +1780,9 @@ class KIWorkspaceApp:
                 return (
                     gr.update(visible=True),
                     f"### 📁 {project.name} ({phase_name})",
-                    info,
+                    path_info,
+                    github_info,
+                    codacy_info,
                     critical_list,
                     high_list,
                     release_info,
@@ -1791,7 +1804,19 @@ class KIWorkspaceApp:
                             return project_id, *load_project_details(project_id)
                 except Exception as e:
                     logger.error(f"Dashboard select error: {e}")
-                return None, gr.update(visible=False), "", "", "", "", "", "*-*", ""
+                return (
+                    None,
+                    gr.update(visible=False),
+                    "",
+                    "*-*",
+                    "*-*",
+                    "*-*",
+                    "*Keine*",
+                    "*Keine*",
+                    "*-*",
+                    "*-*",
+                    "",
+                )
 
             def dash_sync_project(project_id):
                 """Sync für ausgewähltes Projekt."""
@@ -1853,7 +1878,9 @@ class KIWorkspaceApp:
                     dash_selected_id,
                     dash_detail_group,
                     dash_detail_header,
-                    dash_detail_info,
+                    dash_info_path,
+                    dash_info_github,
+                    dash_info_codacy,
                     dash_critical_list,
                     dash_high_list,
                     dash_release_info,
@@ -1868,7 +1895,7 @@ class KIWorkspaceApp:
                 inputs=[dash_selected_id],
                 outputs=[dash_detail_msg],
             ).then(
-                fn=lambda pid: load_project_details(pid)[3:6] if pid else ("", "", ""),
+                fn=lambda pid: load_project_details(pid)[5:8] if pid else ("", "", ""),
                 inputs=[dash_selected_id],
                 outputs=[dash_critical_list, dash_high_list, dash_release_info],
             ).then(
