@@ -1219,16 +1219,6 @@ class KIWorkspaceApp:
                     gr.Markdown("### Projekt-Werkzeuge")
                     gr.Markdown("Backup, Test-Clone und Code-Formatierung für deine Projekte.")
 
-                    # Projekt-Auswahl
-                    with gr.Row():
-                        tools_project_dropdown = gr.Dropdown(
-                            label="Projekt auswählen",
-                            choices=self.get_project_choices(),
-                            value=None,
-                            scale=3,
-                        )
-                        tools_refresh_btn = gr.Button("🔄", scale=1)
-
                     # --- Backup ---
                     with gr.Accordion("📦 Backup erstellen", open=False):
                         gr.Textbox(
@@ -1275,14 +1265,6 @@ class KIWorkspaceApp:
 
                     # Event Handlers für Projekt-Tools
 
-                    def refresh_tools_projects():
-                        return gr.update(choices=self.get_project_choices())
-
-                    tools_refresh_btn.click(
-                        fn=refresh_tools_projects,
-                        outputs=[tools_project_dropdown],
-                    )
-
                     def do_backup(project_id: int | None) -> str:
                         if not project_id:
                             return "❌ Kein Projekt ausgewählt"
@@ -1298,7 +1280,7 @@ class KIWorkspaceApp:
 
                     backup_btn.click(
                         fn=do_backup,
-                        inputs=[tools_project_dropdown],
+                        inputs=[project_dropdown],
                         outputs=[backup_status],
                     )
 
@@ -1319,7 +1301,7 @@ class KIWorkspaceApp:
 
                     clone_btn.click(
                         fn=do_clone,
-                        inputs=[tools_project_dropdown],
+                        inputs=[project_dropdown],
                         outputs=[clone_status],
                     )
 
@@ -1338,7 +1320,7 @@ class KIWorkspaceApp:
 
                     ruff_btn.click(
                         fn=do_ruff_fix,
-                        inputs=[tools_project_dropdown],
+                        inputs=[project_dropdown],
                         outputs=[ruff_status],
                     )
 
@@ -1370,7 +1352,7 @@ class KIWorkspaceApp:
 
                     workflow_btn.click(
                         fn=do_final_workflow,
-                        inputs=[tools_project_dropdown],
+                        inputs=[project_dropdown],
                         outputs=[workflow_log],
                     )
 
