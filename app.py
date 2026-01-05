@@ -1268,7 +1268,7 @@ class KIWorkspaceApp:
                     def do_backup(project_id: int | None) -> str:
                         if not project_id:
                             return "❌ Kein Projekt ausgewählt"
-                        project = self.db.get_project_by_id(project_id)
+                        project = self.db.get_project(project_id)
                         if not project:
                             return "❌ Projekt nicht gefunden"
                         backup_base = self.db.get_setting("backup_base_path") or "~/projekte_backup"
@@ -1287,7 +1287,7 @@ class KIWorkspaceApp:
                     def do_clone(project_id: int | None) -> str:
                         if not project_id:
                             return "❌ Kein Projekt ausgewählt"
-                        project = self.db.get_project_by_id(project_id)
+                        project = self.db.get_project(project_id)
                         if not project:
                             return "❌ Projekt nicht gefunden"
                         clone_base = (
@@ -1308,7 +1308,7 @@ class KIWorkspaceApp:
                     def do_ruff_fix(project_id: int | None) -> str:
                         if not project_id:
                             return "❌ Kein Projekt ausgewählt"
-                        project = self.db.get_project_by_id(project_id)
+                        project = self.db.get_project(project_id)
                         if not project or not project.path:
                             return "❌ Projekt-Pfad nicht gefunden"
                         success, output, files_changed = run_ruff_fix(project.path)
@@ -1327,7 +1327,7 @@ class KIWorkspaceApp:
                     def do_final_workflow(project_id: int | None) -> str:
                         if not project_id:
                             return "❌ Kein Projekt ausgewählt"
-                        project = self.db.get_project_by_id(project_id)
+                        project = self.db.get_project(project_id)
                         if not project:
                             return "❌ Projekt nicht gefunden"
                         backup_base = self.db.get_setting("backup_base_path") or "~/projekte_backup"
@@ -1497,7 +1497,7 @@ class KIWorkspaceApp:
                         project_path_str = None
                         project_name = None
                         if project_id:
-                            project = self.db.get_project_by_id(project_id)
+                            project = self.db.get_project(project_id)
                             if project:
                                 project_path_str = project.path
                                 project_name = project.name
@@ -1682,7 +1682,7 @@ class KIWorkspaceApp:
                 if not project_id:
                     return "❌ Kein Projekt ausgewählt"
 
-                project = self.db.get_project_by_id(project_id)
+                project = self.db.get_project(project_id)
                 if not project or not project.path:
                     return "❌ Projekt-Pfad nicht gefunden"
 
