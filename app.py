@@ -897,23 +897,16 @@ class KIWorkspaceApp:
 
                             # OpenRouter Model
                             gr.Markdown("### AI Commit Model")
+                            gr.Markdown(
+                                "*Beispiele: `x-ai/grok-3-mini-beta`, `anthropic/claude-sonnet-4`, "
+                                "`openai/gpt-4o-mini`, `google/gemini-2.0-flash-001`*"
+                            )
                             with gr.Row():
-                                openrouter_model_dropdown = gr.Dropdown(
-                                    label="Model",
-                                    choices=[
-                                        (
-                                            "Grok 3 Mini (schnell, guenstig)",
-                                            "x-ai/grok-3-mini-beta",
-                                        ),
-                                        ("Grok 3 (beste Qualitaet)", "x-ai/grok-3-beta"),
-                                        ("Grok 2", "x-ai/grok-2-1212"),
-                                        ("Claude Sonnet 4", "anthropic/claude-sonnet-4"),
-                                        ("GPT-4o Mini", "openai/gpt-4o-mini"),
-                                        ("GPT-4o", "openai/gpt-4o"),
-                                        ("Gemini 2.0 Flash", "google/gemini-2.0-flash-001"),
-                                    ],
+                                openrouter_model_input = gr.Textbox(
+                                    label="Model ID",
                                     value=self.db.get_setting("openrouter_model")
                                     or "x-ai/grok-3-mini-beta",
+                                    placeholder="z.B. x-ai/grok-3-mini-beta",
                                     scale=4,
                                 )
                                 save_model_btn = gr.Button(
@@ -2890,7 +2883,7 @@ class KIWorkspaceApp:
             # OpenRouter Model speichern
             save_model_btn.click(
                 fn=save_openrouter_model,
-                inputs=[openrouter_model_dropdown],
+                inputs=[openrouter_model_input],
                 outputs=[model_save_result],
             )
 
