@@ -6,6 +6,7 @@ SQLite mit FTS5 für Volltextsuche.
 
 import contextlib
 import json
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -527,6 +528,23 @@ class DatabaseManager:
                                VALUES (?, 'Gradio Share', ?, ?, 'Gradio share=False (kein Public Sharing)')""",
                             (phase_id, 1 if enabled else 0, severity),
                         )
+
+            # Migration: Backup/Clone-Pfad Settings hinzufuegen falls nicht vorhanden
+            cursor = conn.execute("SELECT COUNT(*) FROM settings WHERE key = 'backup_base_path'")
+            if cursor.fetchone()[0] == 0:
+                home = os.path.expanduser("~")
+                default_backup_path = os.path.join(home, "projekte_backup")
+                default_test_path = os.path.join(home, "projekte_test")
+                conn.execute(
+                    """INSERT INTO settings (key, value, is_encrypted, description)
+                       VALUES ('backup_base_path', ?, 0, 'Basis-Pfad fuer Projekt-Backups')""",
+                    (default_backup_path,),
+                )
+                conn.execute(
+                    """INSERT INTO settings (key, value, is_encrypted, description)
+                       VALUES ('test_clone_base_path', ?, 0, 'Basis-Pfad fuer Test-Clones')""",
+                    (default_test_path,),
+                )
 
             # KI-FAQ Tabelle
             conn.execute("""
