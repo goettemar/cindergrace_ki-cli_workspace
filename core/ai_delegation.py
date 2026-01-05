@@ -416,158 +416,158 @@ def delegate_task(
     )
 
 
-# Default-Prompts fuer initiale Einrichtung
+# Default prompts for initial setup (English for AI-to-AI communication)
 DEFAULT_PROMPTS = [
     {
         "name": "code_review",
-        "description": "Allgemeines Code-Review",
-        "prompt": """Reviewe den folgenden Code auf:
-- Bugs und Fehler
-- Security-Probleme
-- Performance-Issues
-- Best Practices
-- Code-Qualitaet
+        "description": "General code review",
+        "prompt": """Review the following code for:
+- Bugs and errors
+- Security issues
+- Performance problems
+- Best practices violations
+- Code quality issues
 
-Datei: {file_name}
+File: {file_name}
 
 ```
 {file_content}
 ```
 
-Antworte auf Deutsch mit konkreten Verbesserungsvorschlaegen.""",
+Provide specific improvement suggestions with code examples where applicable.""",
         "default_ai": "codex",
         "category": "review",
     },
     {
         "name": "security_audit",
-        "description": "Security-Analyse (OWASP)",
-        "prompt": """Analysiere den folgenden Code auf Security-Probleme:
+        "description": "Security analysis (OWASP)",
+        "prompt": """Analyze the following code for security vulnerabilities:
 - OWASP Top 10
-- Injection-Schwachstellen
-- Authentication/Authorization
-- Sensitive Data Exposure
-- Security Misconfiguration
+- Injection vulnerabilities (SQL, Command, XSS)
+- Authentication/Authorization issues
+- Sensitive data exposure
+- Security misconfiguration
 
-Datei: {file_name}
+File: {file_name}
 
 ```
 {file_content}
 ```
 
-Liste alle gefundenen Probleme mit Schweregrad (Critical/High/Medium/Low) und Loesungsvorschlag.""",
+List all findings with severity (Critical/High/Medium/Low) and remediation steps.""",
         "default_ai": "gemini",
         "category": "security",
     },
     {
         "name": "test_suggestions",
-        "description": "Testvorschlaege generieren",
-        "prompt": """Analysiere den folgenden Code und schlage Tests vor:
-- Unit Tests fuer alle Funktionen
-- Edge Cases
-- Error Handling Tests
-- Integration Tests (falls relevant)
+        "description": "Generate test suggestions",
+        "prompt": """Analyze the following code and suggest tests:
+- Unit tests for all functions/methods
+- Edge cases and boundary conditions
+- Error handling tests
+- Integration tests (if applicable)
 
-Datei: {file_name}
+File: {file_name}
 
 ```
 {file_content}
 ```
 
-Generiere pytest-kompatible Testfaelle mit Erklaerung.""",
+Generate pytest-compatible test cases with explanations.""",
         "default_ai": "claude",
         "category": "testing",
     },
     {
         "name": "refactor_ideas",
-        "description": "Refactoring-Vorschlaege",
-        "prompt": """Analysiere den folgenden Code auf Refactoring-Moeglichkeiten:
-- Code-Duplikation
-- Komplexitaet reduzieren
-- Bessere Abstraktion
-- Design Patterns
-- Lesbarkeit verbessern
+        "description": "Refactoring suggestions",
+        "prompt": """Analyze the following code for refactoring opportunities:
+- Code duplication
+- Complexity reduction
+- Better abstractions
+- Design patterns
+- Readability improvements
 
-Datei: {file_name}
+File: {file_name}
 
 ```
 {file_content}
 ```
 
-Schlage konkrete Refactorings vor mit Vorher/Nachher Beispielen.""",
+Suggest concrete refactorings with before/after examples.""",
         "default_ai": "gemini",
         "category": "refactoring",
     },
     {
         "name": "doc_generator",
-        "description": "Dokumentation generieren",
-        "prompt": """Generiere Dokumentation fuer den folgenden Code:
-- Docstrings fuer alle Funktionen/Klassen
-- Typen-Annotationen
-- Beispiel-Verwendung
-- README-Abschnitt
+        "description": "Generate documentation",
+        "prompt": """Generate documentation for the following code:
+- Docstrings for all functions/classes
+- Type annotations
+- Usage examples
+- README section
 
-Datei: {file_name}
+File: {file_name}
 
 ```
 {file_content}
 ```
 
-Formatiere als Markdown.""",
+Format as Markdown.""",
         "default_ai": "claude",
         "category": "documentation",
     },
     {
         "name": "git_commit_review",
-        "description": "Review der uncommitted Aenderungen",
-        "prompt": """Reviewe die folgenden Git-Aenderungen:
+        "description": "Review uncommitted changes",
+        "prompt": """Review the following Git changes:
 
 ```diff
 {git_diff}
 ```
 
-Pruefe auf:
-- Bugs in den Aenderungen
-- Unbeabsichtigte Nebeneffekte
-- Fehlende Tests
-- Code-Qualitaet
+Check for:
+- Bugs in the changes
+- Unintended side effects
+- Missing tests
+- Code quality issues
 
-Gib eine Zusammenfassung und Empfehlung (Commit OK / Nachbessern).""",
+Provide a summary and recommendation (OK to commit / Needs work).""",
         "default_ai": "codex",
         "category": "review",
     },
     {
         "name": "explain_code",
-        "description": "Code erklaeren",
-        "prompt": """Erklaere den folgenden Code ausfuehrlich:
-- Was macht der Code?
-- Wie funktioniert er?
-- Welche Patterns werden verwendet?
-- Wichtige Stellen markieren
+        "description": "Explain code",
+        "prompt": """Explain the following code in detail:
+- What does the code do?
+- How does it work?
+- What patterns are used?
+- Highlight important sections
 
-Datei: {file_name}
+File: {file_name}
 
 ```
 {file_content}
 ```
 
-Erklaere so, dass ein Junior-Entwickler es versteht.""",
+Explain so that a junior developer can understand.""",
         "default_ai": "claude",
         "category": "documentation",
     },
     {
         "name": "issue_analysis",
-        "description": "Codacy-Issues analysieren",
-        "prompt": """Analysiere die folgenden Codacy-Issues fuer Projekt {project}:
+        "description": "Analyze Codacy issues",
+        "prompt": """Analyze the following Codacy issues for project {project}:
 
 {issues}
 
-Fuer jedes Issue:
-1. Ist es ein echtes Problem oder False Positive?
-2. Wie kritisch ist es wirklich?
-3. Wie sollte es behoben werden?
-4. Empfehlung: Fix / Ignore (mit Begruendung)
+For each issue:
+1. Is it a real problem or false positive?
+2. How critical is it really?
+3. How should it be fixed?
+4. Recommendation: Fix / Ignore (with justification)
 
-Sortiere nach Prioritaet.""",
+Sort by priority.""",
         "default_ai": "gemini",
         "category": "analysis",
     },

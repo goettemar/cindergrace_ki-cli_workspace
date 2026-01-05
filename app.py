@@ -1383,9 +1383,9 @@ class KIWorkspaceApp:
                                 scale=1,
                             )
                         with gr.Row():
-                            target_file = gr.Textbox(
-                                label="Zieldatei (optional)",
-                                placeholder="z.B. src/module.py",
+                            input_file = gr.Textbox(
+                                label="Input File (optional)",
+                                placeholder="e.g. src/module.py",
                                 scale=2,
                             )
                             timeout_slider = gr.Slider(
@@ -1396,6 +1396,14 @@ class KIWorkspaceApp:
                                 step=30,
                                 scale=1,
                             )
+                        with gr.Row():
+                            output_dir = gr.Textbox(
+                                label="Output Directory",
+                                value=self.db.get_setting("delegation_output_dir")
+                                or "~/ki-delegation-output",
+                                scale=2,
+                            )
+                            save_output_dir_btn = gr.Button("💾 Save", scale=0)
                         delegate_btn = gr.Button("🚀 Delegieren", variant="primary")
                         delegate_status = gr.Markdown(
                             "_Wähle einen Prompt und starte die Delegation._"
@@ -1479,13 +1487,27 @@ class KIWorkspaceApp:
 **Verfügbare Variablen:** `{{file}}`, `{{file_content}}`, `{{file_name}}`, `{{project}}`, `{{project_path}}`, `{{git_diff}}`, `{{issues}}`, `{{timestamp}}`
 """
 
+                    def save_output_directory(output_path: str) -> str:
+                        """Saves the output directory to settings."""
+                        self.db.set_setting(
+                            "delegation_output_dir",
+                            output_path,
+                            description="Output directory for AI delegation results",
+                        )
+                        return f"✅ Saved: {output_path}"
+
                     def do_delegate(
                         project_id: int | None,
                         prompt_name: str,
                         ai_id: str,
-                        file_path: str,
+                        input_file_path: str,
                         timeout: int,
+                        output_directory: str,
                     ) -> tuple[str, str, dict]:
+                        import os
+                        from datetime import datetime
+                        from pathlib import Path
+
                         if not prompt_name:
                             return "❌ Kein Prompt ausgewählt", "", gr.update(visible=False)
 
@@ -1502,15 +1524,13 @@ class KIWorkspaceApp:
                                 project_path_str = project.path
                                 project_name = project.name
 
-                        # File-Pfad aufloesen
+                        # Input file path resolve
                         file_path_resolved = None
-                        if file_path and file_path.strip():
-                            import os
-
-                            if project_path_str and not os.path.isabs(file_path):
-                                file_path_resolved = os.path.join(project_path_str, file_path)
+                        if input_file_path and input_file_path.strip():
+                            if project_path_str and not os.path.isabs(input_file_path):
+                                file_path_resolved = os.path.join(project_path_str, input_file_path)
                             else:
-                                file_path_resolved = os.path.expanduser(file_path)
+                                file_path_resolved = os.path.expanduser(input_file_path)
 
                         from core.ai_delegation import delegate_task
 
@@ -1523,14 +1543,43 @@ class KIWorkspaceApp:
                             timeout=timeout,
                         )
 
+                        # Auto-generate output filename and save
+                        output_path_str = ""
+                        if output_directory and output_directory.strip():
+                            try:
+                                out_dir = Path(os.path.expanduser(output_directory))
+                                out_dir.mkdir(parents=True, exist_ok=True)
+
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                ai_used = ai_id or prompt.default_ai
+                                filename = f"{prompt_name}_{ai_used}_{timestamp}.md"
+                                output_file = out_dir / filename
+
+                                # Write output to file
+                                with open(output_file, "w") as f:
+                                    f.write(f"# {prompt_name} via {ai_used}\n\n")
+                                    f.write(f"**Timestamp:** {timestamp}\n")
+                                    f.write(f"**Project:** {project_name or '-'}\n")
+                                    f.write(f"**Input File:** {input_file_path or '-'}\n")
+                                    f.write(f"**Duration:** {result.duration_seconds}s\n")
+                                    f.write(f"**Success:** {result.success}\n\n")
+                                    f.write("---\n\n")
+                                    f.write(result.output or "")
+
+                                output_path_str = f"\n📁 Saved: `{output_file}`"
+                            except Exception as e:
+                                output_path_str = f"\n⚠️ Save failed: {e}"
+
                         if result.success:
                             return (
-                                f"✅ Erfolgreich ({result.duration_seconds}s) via {result.ai_used}",
+                                f"✅ Success ({result.duration_seconds}s) via {result.ai_used}"
+                                + output_path_str,
                                 result.output,
                                 gr.update(visible=True),
                             )
                         return (
-                            f"❌ Fehler ({result.duration_seconds}s): {result.error}",
+                            f"❌ Error ({result.duration_seconds}s): {result.error}"
+                            + output_path_str,
                             result.output or "",
                             gr.update(visible=True),
                         )
@@ -1572,14 +1621,21 @@ class KIWorkspaceApp:
                         outputs=[prompt_details],
                     )
 
+                    save_output_dir_btn.click(
+                        fn=save_output_directory,
+                        inputs=[output_dir],
+                        outputs=[delegate_status],
+                    )
+
                     delegate_btn.click(
                         fn=do_delegate,
                         inputs=[
                             project_dropdown,
                             prompt_dropdown,
                             ai_dropdown,
-                            target_file,
+                            input_file,
                             timeout_slider,
+                            output_dir,
                         ],
                         outputs=[delegate_status, delegate_result, delegate_result],
                     )
