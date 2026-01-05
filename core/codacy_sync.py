@@ -271,8 +271,15 @@ class CodacySync:
 
         stats = {"srm": 0, "quality": 0, "errors": [], "removed": 0}
 
-        # Alle sync'ten external_ids sammeln (fuer Cleanup)
-        synced_external_ids: set[str] = set()
+        # 0. Alle lokalen Issues fuer dieses Projekt loeschen (Clean Slate)
+        try:
+            removed = db.delete_issues_not_in_list(project.id, set())  # Leeres Set = alle loeschen
+            stats["removed"] = removed
+            if removed > 0:
+                logger.info(f"Cleanup vor Sync: {removed} alte Issues entfernt")
+        except Exception as e:
+            logger.error(f"Pre-Sync Cleanup Fehler: {e}")
+            stats["errors"].append(f"Cleanup: {e}")
 
         # Status-Mapping
         status_map = {
@@ -330,9 +337,6 @@ class CodacySync:
                 )
                 db.upsert_issue(issue)
                 stats["srm"] += 1
-                # Track external_id fuer Cleanup
-                if issue.external_id:
-                    synced_external_ids.add(issue.external_id)
         except Exception as e:
             logger.error(f"SRM-Sync Fehler: {e}")
             stats["errors"].append(f"SRM: {e}")
@@ -382,23 +386,9 @@ class CodacySync:
                 )
                 db.upsert_issue(issue)
                 stats["quality"] += 1
-                # Track external_id fuer Cleanup
-                if issue.external_id:
-                    synced_external_ids.add(issue.external_id)
         except Exception as e:
             logger.error(f"Quality-Sync Fehler: {e}")
             stats["errors"].append(f"Quality: {e}")
-
-        # 3. Lokale Issues entfernen die nicht mehr in Codacy existieren
-        # (z.B. weil der Code gefixt wurde)
-        try:
-            removed = db.delete_issues_not_in_list(project.id, synced_external_ids)
-            stats["removed"] = removed
-            if removed > 0:
-                logger.info(f"Cleanup: {removed} veraltete Issues entfernt")
-        except Exception as e:
-            logger.error(f"Cleanup-Fehler: {e}")
-            stats["errors"].append(f"Cleanup: {e}")
 
         # Sync-Zeit und Cache aktualisieren
         db.update_project_sync_time(project.id)
