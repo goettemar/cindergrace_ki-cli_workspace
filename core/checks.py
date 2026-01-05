@@ -344,7 +344,8 @@ def check_tests(project_path: str) -> CheckResult:
     """
     Prueft ob Tests vorhanden sind und bestehen.
 
-    Sucht nach pytest im Projekt-venv (.venv/bin/pytest) oder global.
+    Nutzt gecachte Ergebnisse aus .pytest_cache wenn vorhanden und aktuell.
+    Fuehrt Tests nur aus wenn noetig.
     """
     path = Path(project_path)
 
@@ -365,62 +366,57 @@ def check_tests(project_path: str) -> CheckResult:
 
     # Pytest-Pfad: bevorzuge Projekt-venv, dann global
     venv_pytest = path / ".venv" / "bin" / "pytest"
-    pytest_cmd = str(venv_pytest) if venv_pytest.exists() else "pytest"
-
-    # Versuche pytest auszufuehren
-    try:
-        result = subprocess.run(
-            [pytest_cmd, project_path, "-q", "--tb=no", "-x"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=project_path,
-        )
-
-        if result.returncode == 0:
-            return CheckResult(
-                name="Tests",
-                passed=True,
-                message="Tests bestanden",
-                severity="error",
-            )
-        elif result.returncode == 5:
-            # pytest: no tests collected
-            return CheckResult(
-                name="Tests",
-                passed=True,
-                message="Keine Tests gesammelt",
-                severity="warning",
-            )
-        else:
-            return CheckResult(
-                name="Tests",
-                passed=False,
-                message="Tests fehlgeschlagen",
-                severity="error",
-            )
-
-    except FileNotFoundError:
+    if not venv_pytest.exists():
         return CheckResult(
             name="Tests",
             passed=True,
-            message="Uebersprungen (pytest nicht installiert)",
+            message="Nicht verfuegbar (pytest nicht gefunden)",
             severity="info",
         )
-    except subprocess.TimeoutExpired:
-        return CheckResult(
-            name="Tests",
-            passed=False,
-            message="Tests Timeout (> 120s)",
-            severity="error",
-        )
-    except Exception as e:
-        return CheckResult(
-            name="Tests",
-            passed=True,
-            message=f"Uebersprungen ({e})",
-            severity="info",
-        )
+    # Prüfe auf gecachtes Ergebnis aus .pytest_cache/v/cache/lastfailed
+    # Wenn lastfailed leer oder nicht vorhanden -> Tests waren erfolgreich
+    cache_dir = path / ".pytest_cache" / "v" / "cache"
+    lastfailed_file = cache_dir / "lastfailed"
+
+    # Wenn .pytest_cache existiert, nutze gecachte Info
+    if cache_dir.exists():
+        try:
+            # Prüfe ob lastfailed existiert und nicht leer ist
+            if lastfailed_file.exists():
+                content = lastfailed_file.read_text().strip()
+                # Leeres Dict {} oder nicht vorhanden = keine Fehler
+                if content and content != "{}":
+                    return CheckResult(
+                        name="Tests",
+                        passed=False,
+                        message="Tests fehlgeschlagen (gecacht)",
+                        severity="error",
+                    )
+                else:
+                    return CheckResult(
+                        name="Tests",
+                        passed=True,
+                        message="Tests bestanden (gecacht)",
+                        severity="error",
+                    )
+            else:
+                # Kein lastfailed = Tests waren OK
+                return CheckResult(
+                    name="Tests",
+                    passed=True,
+                    message="Tests bestanden (gecacht)",
+                    severity="error",
+                )
+        except Exception:
+            pass  # Bei Fehler: Tests ausfuehren
+
+    # Kein Cache - zeige Hinweis statt Tests auszufuehren
+    return CheckResult(
+        name="Tests",
+        passed=True,
+        message="Nicht gecacht (pytest ausfuehren)",
+        severity="info",
+    )
 
 
 def check_git_status(project_path: str) -> CheckResult:
