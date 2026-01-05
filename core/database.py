@@ -710,7 +710,7 @@ class DatabaseManager:
             ("default_gitignore", "python", "Standard .gitignore Template"),
             (
                 "gitignore_required_patterns",
-                '["/temp"]',
+                '["/temp", "*.log", ".env.local", ".env", ".venv", "*.pem", "*.key", "*.db", "state.json", "credentials.json", "*_cache.json"]',
                 "JSON-Array mit Patterns die in .gitignore sein muessen",
             ),
         ]
