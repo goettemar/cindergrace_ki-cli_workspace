@@ -344,8 +344,7 @@ def check_tests(project_path: str) -> CheckResult:
     """
     Prueft ob Tests vorhanden sind und bestehen.
 
-    Nutzt gecachte Ergebnisse aus .pytest_cache wenn vorhanden und aktuell.
-    Fuehrt Tests nur aus wenn noetig.
+    Fuehrt pytest immer frisch aus fuer zuverlaessige Ergebnisse.
     """
     path = Path(project_path)
 
@@ -373,50 +372,54 @@ def check_tests(project_path: str) -> CheckResult:
             message="Nicht verfuegbar (pytest nicht gefunden)",
             severity="info",
         )
-    # Prüfe auf gecachtes Ergebnis aus .pytest_cache/v/cache/lastfailed
-    # Wenn lastfailed leer oder nicht vorhanden -> Tests waren erfolgreich
-    cache_dir = path / ".pytest_cache" / "v" / "cache"
-    lastfailed_file = cache_dir / "lastfailed"
 
-    # Wenn .pytest_cache existiert, nutze gecachte Info
-    if cache_dir.exists():
-        try:
-            # Prüfe ob lastfailed existiert und nicht leer ist
-            if lastfailed_file.exists():
-                content = lastfailed_file.read_text().strip()
-                # Leeres Dict {} oder nicht vorhanden = keine Fehler
-                if content and content != "{}":
-                    return CheckResult(
-                        name="Tests",
-                        passed=False,
-                        message="Tests fehlgeschlagen (gecacht)",
-                        severity="error",
-                    )
-                else:
-                    return CheckResult(
-                        name="Tests",
-                        passed=True,
-                        message="Tests bestanden (gecacht)",
-                        severity="error",
-                    )
-            else:
-                # Kein lastfailed = Tests waren OK
-                return CheckResult(
-                    name="Tests",
-                    passed=True,
-                    message="Tests bestanden (gecacht)",
-                    severity="error",
-                )
-        except Exception:
-            pass  # Bei Fehler: Tests ausfuehren
+    # Tests ausfuehren
+    try:
+        result = subprocess.run(
+            [str(venv_pytest), "-q", "--tb=no"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=120,  # 2 Minuten Timeout
+        )
 
-    # Kein Cache - zeige Hinweis statt Tests auszufuehren
-    return CheckResult(
-        name="Tests",
-        passed=True,
-        message="Nicht gecacht (pytest ausfuehren)",
-        severity="info",
-    )
+        # Ausgabe parsen: "X passed" oder "X failed, Y passed"
+        output = result.stdout + result.stderr
+        passed_match = re.search(r"(\d+) passed", output)
+        failed_match = re.search(r"(\d+) failed", output)
+
+        passed_count = int(passed_match.group(1)) if passed_match else 0
+        failed_count = int(failed_match.group(1)) if failed_match else 0
+
+        if result.returncode == 0:
+            return CheckResult(
+                name="Tests",
+                passed=True,
+                message=f"{passed_count} Tests bestanden",
+                severity="error",
+            )
+        else:
+            return CheckResult(
+                name="Tests",
+                passed=False,
+                message=f"{failed_count} fehlgeschlagen, {passed_count} bestanden",
+                severity="error",
+            )
+
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            name="Tests",
+            passed=False,
+            message="Timeout (>120s)",
+            severity="error",
+        )
+    except Exception as e:
+        return CheckResult(
+            name="Tests",
+            passed=False,
+            message=f"Fehler: {e}",
+            severity="error",
+        )
 
 
 def check_ruff(project_path: str) -> CheckResult:
