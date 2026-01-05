@@ -2010,24 +2010,36 @@ class KIWorkspaceApp:
                 return rows
 
             def refresh_all_projects():
-                """Aktualisiert den Cache für alle Projekte."""
+                """Aktualisiert den Cache für alle Projekte (parallel)."""
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
                 from core.checks import run_all_checks
 
                 projects = self.db.get_all_projects(include_archived=False)
-                updated = 0
 
-                for p in projects:
+                def refresh_single_project(project):
+                    """Aktualisiert ein einzelnes Projekt."""
                     # Issues-Cache aktualisieren
-                    self.db.update_project_cache(p.id)
+                    self.db.update_project_cache(project.id)
 
                     # Release-Check ausführen und cachen
-                    if p.path:
-                        results = run_all_checks(self.db, p)
+                    if project.path:
+                        results = run_all_checks(self.db, project)
                         passed = sum(1 for r in results if r.passed)
                         total = len(results)
-                        self.db.update_release_cache(p.id, passed, total, passed == total)
+                        self.db.update_release_cache(project.id, passed, total, passed == total)
+                    return project.name
 
-                    updated += 1
+                # Alle Projekte parallel aktualisieren
+                updated = 0
+                with ThreadPoolExecutor(max_workers=len(projects) or 1) as executor:
+                    futures = {executor.submit(refresh_single_project, p): p for p in projects}
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                            updated += 1
+                        except Exception:
+                            pass  # Fehler ignorieren, andere Projekte weitermachen
 
                 return load_dashboard_data(), f"✅ {updated} Projekte aktualisiert"
 
