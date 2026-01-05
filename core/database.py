@@ -420,6 +420,29 @@ class DatabaseManager:
                        VALUES ('initial', 'Initial', 'Projekt-Erstellung und Setup', 0, 0)"""
                 )
 
+            # Migration: Ruff-Check zu check_matrix hinzufügen falls nicht vorhanden
+            cursor = conn.execute("SELECT COUNT(*) FROM check_matrix WHERE check_name = 'Ruff'")
+            if cursor.fetchone()[0] == 0:
+                # Phase-IDs holen
+                cursor = conn.execute("SELECT id, name FROM project_phases")
+                phase_ids = {row["name"]: row["id"] for row in cursor.fetchall()}
+                # Ruff für alle Phasen eintragen
+                ruff_configs = [
+                    ("development", True, "warning"),
+                    ("refactoring", True, "error"),
+                    ("testing", True, "warning"),
+                    ("final", True, "error"),
+                ]
+                for phase_name, enabled, severity in ruff_configs:
+                    phase_id = phase_ids.get(phase_name)
+                    if phase_id:
+                        conn.execute(
+                            """INSERT INTO check_matrix
+                               (phase_id, check_name, enabled, severity, description)
+                               VALUES (?, 'Ruff', ?, ?, 'Keine Linting-Fehler (ruff check)')""",
+                            (phase_id, 1 if enabled else 0, severity),
+                        )
+
             # KI-FAQ Tabelle
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ki_faq (
@@ -562,6 +585,16 @@ class DatabaseManager:
                     ("refactoring", True, "error"),
                     ("testing", True, "warning"),
                     ("final", True, "warning"),
+                ],
+            ),
+            (
+                "Ruff",
+                "Keine Linting-Fehler (ruff check)",
+                [
+                    ("development", True, "warning"),
+                    ("refactoring", True, "error"),
+                    ("testing", True, "warning"),
+                    ("final", True, "error"),
                 ],
             ),
             (

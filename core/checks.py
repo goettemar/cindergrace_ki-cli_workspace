@@ -419,6 +419,98 @@ def check_tests(project_path: str) -> CheckResult:
     )
 
 
+def check_ruff(project_path: str) -> CheckResult:
+    """
+    Prueft den Code mit ruff (Linter).
+
+    Sucht ruff im Projekt-venv (.venv/bin/ruff) oder global.
+    Fuehrt `ruff check` aus und zaehlt Fehler.
+    """
+    path = Path(project_path)
+
+    # Ruff-Pfad: bevorzuge Projekt-venv, dann global
+    venv_ruff = path / ".venv" / "bin" / "ruff"
+    ruff_cmd = str(venv_ruff) if venv_ruff.exists() else "ruff"
+
+    # Prüfe ob ruff ueberhaupt verfuegbar ist
+    try:
+        version_result = subprocess.run(
+            [ruff_cmd, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if version_result.returncode != 0:
+            return CheckResult(
+                name="Ruff",
+                passed=True,
+                message="Nicht verfuegbar (ruff nicht gefunden)",
+                severity="info",
+            )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return CheckResult(
+            name="Ruff",
+            passed=True,
+            message="Nicht verfuegbar (ruff nicht installiert)",
+            severity="info",
+        )
+
+    # Prüfe nur src/ falls vorhanden, sonst Projekt-Root
+    src_path = path / "src"
+    check_path = str(src_path) if src_path.exists() else project_path
+
+    try:
+        result = subprocess.run(
+            [
+                ruff_cmd,
+                "check",
+                check_path,
+                "--quiet",  # Nur Fehler ausgeben
+                "--exclude",
+                ".venv,venv,node_modules,__pycache__,build,dist",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=project_path,
+        )
+
+        # Zaehle Fehler (jede Zeile = 1 Fehler)
+        error_count = 0
+        if result.stdout.strip():
+            error_count = len(result.stdout.strip().split("\n"))
+
+        if error_count == 0:
+            return CheckResult(
+                name="Ruff",
+                passed=True,
+                message="Keine Linting-Fehler",
+                severity="warning",
+            )
+
+        return CheckResult(
+            name="Ruff",
+            passed=False,
+            message=f"{error_count} Linting-Fehler",
+            severity="warning",
+        )
+
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            name="Ruff",
+            passed=True,
+            message="Uebersprungen (Timeout)",
+            severity="info",
+        )
+    except Exception as e:
+        return CheckResult(
+            name="Ruff",
+            passed=True,
+            message=f"Uebersprungen ({e})",
+            severity="info",
+        )
+
+
 def check_git_status(project_path: str) -> CheckResult:
     """Prueft ob das Git-Repository sauber ist (keine uncommitted changes)."""
     try:
@@ -685,6 +777,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
         "README": lambda: check_readme(project.path),
         "CHANGELOG": lambda: check_changelog(project.path),
         "Radon Complexity": lambda: check_radon_complexity(project.path),
+        "Ruff": lambda: check_ruff(project.path),
         "Tests": lambda: check_tests(project.path),
         "Coverage": lambda: check_coverage(project.path),
         "Git Status": lambda: check_git_status(project.path),
@@ -713,6 +806,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
             "README": "error",
             "CHANGELOG": "warning",
             "Radon Complexity": "warning",
+            "Ruff": "warning",
             "Tests": "error",
             "Coverage": "warning",
             "Git Status": "warning",
@@ -769,6 +863,7 @@ def run_phase_checks(
         "README": lambda: check_readme(project.path),
         "CHANGELOG": lambda: check_changelog(project.path),
         "Radon Complexity": lambda: check_radon_complexity(project.path),
+        "Ruff": lambda: check_ruff(project.path),
         "Tests": lambda: check_tests(project.path),
         "Coverage": lambda: check_coverage(project.path),
         "Git Status": lambda: check_git_status(project.path),
