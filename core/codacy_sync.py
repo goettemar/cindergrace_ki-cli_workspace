@@ -291,14 +291,14 @@ class CodacySync:
             "Low": "Low",
         }
 
-        # 1. SRM Items (Security) holen - inkl. Ignored für False Positives
+        # 1. SRM Items (Security) holen - nur offene Issues (keine geschlossenen)
         srm_items = []  # Initialize for deduplication
         try:
             srm_items = self.fetch_srm_items(
                 provider,
                 org,
                 repo,
-                statuses=["OnTrack", "DueSoon", "Overdue", "Ignored", "ClosedOnTime", "ClosedLate"],
+                statuses=["OnTrack", "DueSoon", "Overdue"],  # No closed issues
             )
             for item in srm_items:
                 codacy_status = item.get("status", "")
