@@ -32,30 +32,31 @@ AVAILABLE_MODELS = [
     "google/gemini-2.0-flash-001",
 ]
 
-# Prompt fuer Commit Message Generierung
-COMMIT_PROMPT = """Du bist ein erfahrener Software-Entwickler. Analysiere den folgenden Git Diff und erstelle eine praezise Commit Message.
+# Prompt for commit message generation
+COMMIT_PROMPT = """Write a SHORT commit message for this git diff.
 
-REGELN:
-1. Nutze Conventional Commits Format: type(scope): description
-2. Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build
-3. Scope ist optional, aber hilfreich (z.B. api, ui, db, auth)
-4. Erste Zeile max 72 Zeichen
-5. Bei komplexen Aenderungen: Leerzeile + Bullet Points fuer Details
-6. Schreibe auf Englisch
-7. Fokussiere auf das WAS und WARUM, nicht das WIE
+FORMAT: type(scope): brief description
 
-BEISPIELE:
-- feat(auth): add OAuth2 login support
-- fix(api): handle null response from external service
-- refactor(db): simplify query builder logic
-- docs: update README with installation steps
+TYPES: feat, fix, docs, style, refactor, test, chore
+
+RULES:
+- ONE LINE ONLY, max 72 characters
+- No bullet points, no details
+- Scope only if meaningful
+- Lowercase after colon
+
+EXAMPLES:
+- feat(auth): add OAuth2 login
+- fix(api): handle null response
+- chore: update dependencies
+- docs: fix typo in README
 
 GIT DIFF:
 ```
 {diff}
 ```
 
-Antworte NUR mit der Commit Message, ohne zusaetzliche Erklaerungen."""
+Reply with ONLY the one-line commit message, nothing else."""
 
 
 def get_staged_diff(repo_path: str | None = None) -> tuple[bool, str]:
