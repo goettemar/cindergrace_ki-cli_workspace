@@ -555,6 +555,88 @@ def check_git_status(project_path: str) -> CheckResult:
         )
 
 
+def check_gitignore_patterns(project_path: str, required_patterns: list[str]) -> CheckResult:
+    """
+    Prueft ob bestimmte Patterns in .gitignore vorhanden sind.
+
+    Args:
+        project_path: Pfad zum Projekt
+        required_patterns: Liste der erforderlichen Patterns (z.B. ["/temp", "*.log"])
+
+    Returns:
+        CheckResult mit fehlenden Patterns
+    """
+    path = Path(project_path)
+    gitignore_path = path / ".gitignore"
+
+    if not required_patterns:
+        return CheckResult(
+            name="Gitignore Patterns",
+            passed=True,
+            message="Keine Patterns konfiguriert",
+            severity="info",
+        )
+
+    if not gitignore_path.exists():
+        return CheckResult(
+            name="Gitignore Patterns",
+            passed=False,
+            message=f"Keine .gitignore vorhanden ({len(required_patterns)} Patterns fehlen)",
+            severity="warning",
+        )
+
+    try:
+        content = gitignore_path.read_text(encoding="utf-8", errors="ignore")
+        lines = [line.strip() for line in content.splitlines()]
+        # Entferne Kommentare und leere Zeilen
+        gitignore_entries = [line for line in lines if line and not line.startswith("#")]
+
+        missing = []
+        for pattern in required_patterns:
+            pattern_clean = pattern.strip()
+            if not pattern_clean:
+                continue
+            # Pruefen ob Pattern (oder Variante) vorhanden ist
+            # z.B. "/temp" matcht auch "temp/", "/temp/", "temp"
+            pattern_variants = [
+                pattern_clean,
+                pattern_clean.lstrip("/"),
+                pattern_clean.rstrip("/"),
+                pattern_clean.strip("/"),
+                pattern_clean + "/",
+                "/" + pattern_clean.lstrip("/"),
+            ]
+            found = any(
+                variant in gitignore_entries or variant.rstrip("/") in gitignore_entries
+                for variant in pattern_variants
+            )
+            if not found:
+                missing.append(pattern_clean)
+
+        if missing:
+            return CheckResult(
+                name="Gitignore Patterns",
+                passed=False,
+                message=f"Fehlend: {', '.join(missing)}",
+                severity="warning",
+            )
+
+        return CheckResult(
+            name="Gitignore Patterns",
+            passed=True,
+            message=f"Alle {len(required_patterns)} Patterns vorhanden",
+            severity="warning",
+        )
+
+    except Exception as e:
+        return CheckResult(
+            name="Gitignore Patterns",
+            passed=True,
+            message=f"Nicht lesbar: {e}",
+            severity="info",
+        )
+
+
 def check_readme_english(project_path: str) -> CheckResult:
     """Check if README is written in English (no German umlauts outside quotes)."""
     path = Path(project_path)
@@ -862,11 +944,21 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
         if phase:
             phase_display = phase.display_name
 
+    # Required gitignore patterns aus Settings laden
+    import json
+
+    gitignore_patterns_json = db.get_setting("gitignore_required_patterns") or "[]"
+    try:
+        gitignore_patterns = json.loads(gitignore_patterns_json)
+    except json.JSONDecodeError:
+        gitignore_patterns = []
+
     # DB-basierte Checks (benoetigen DB-Zugriff)
     db_checks = {
         "Critical Issues": lambda: check_critical_issues(db, project.id),
         "High Issues": lambda: check_high_issues(db, project.id),
         "README Status": lambda: check_readme_status(project.path, phase_display),
+        "Gitignore Patterns": lambda: check_gitignore_patterns(project.path, gitignore_patterns),
     }
 
     # Aktivierte Checks aus der Matrix laden
@@ -893,6 +985,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
             "i18n Support": "warning",
             "Code English": "warning",
             "pyproject.toml English": "warning",
+            "Gitignore Patterns": "warning",
         }
 
     # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)
@@ -957,11 +1050,21 @@ def run_phase_checks(
         if phase:
             phase_display = phase.display_name
 
+    # Required gitignore patterns aus Settings laden
+    import json
+
+    gitignore_patterns_json = db.get_setting("gitignore_required_patterns") or "[]"
+    try:
+        gitignore_patterns = json.loads(gitignore_patterns_json)
+    except json.JSONDecodeError:
+        gitignore_patterns = []
+
     # DB-basierte Checks (benoetigen DB-Zugriff)
     db_checks = {
         "Critical Issues": lambda: check_critical_issues(db, project.id),
         "High Issues": lambda: check_high_issues(db, project.id),
         "README Status": lambda: check_readme_status(project.path, phase_display),
+        "Gitignore Patterns": lambda: check_gitignore_patterns(project.path, gitignore_patterns),
     }
 
     # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)

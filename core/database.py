@@ -466,6 +466,29 @@ class DatabaseManager:
                             (phase_id, 1 if enabled else 0, severity),
                         )
 
+            # Migration: Gitignore Patterns zu check_matrix hinzufügen falls nicht vorhanden
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM check_matrix WHERE check_name = 'Gitignore Patterns'"
+            )
+            if cursor.fetchone()[0] == 0:
+                cursor = conn.execute("SELECT id, name FROM project_phases")
+                phase_ids = {row["name"]: row["id"] for row in cursor.fetchall()}
+                gitignore_configs = [
+                    ("development", True, "warning"),
+                    ("refactoring", True, "warning"),
+                    ("testing", True, "warning"),
+                    ("final", True, "error"),
+                ]
+                for phase_name, enabled, severity in gitignore_configs:
+                    phase_id = phase_ids.get(phase_name)
+                    if phase_id:
+                        conn.execute(
+                            """INSERT INTO check_matrix
+                               (phase_id, check_name, enabled, severity, description)
+                               VALUES (?, 'Gitignore Patterns', ?, ?, 'Erforderliche Patterns in .gitignore')""",
+                            (phase_id, 1 if enabled else 0, severity),
+                        )
+
             # KI-FAQ Tabelle
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ki_faq (
@@ -685,6 +708,11 @@ class DatabaseManager:
             ("github_provider", "gh", "Git Provider (gh=GitHub, gl=GitLab, bb=BitBucket)"),
             ("default_license", "polyform-nc", "Standard-Lizenz für neue Projekte"),
             ("default_gitignore", "python", "Standard .gitignore Template"),
+            (
+                "gitignore_required_patterns",
+                '["/temp"]',
+                "JSON-Array mit Patterns die in .gitignore sein muessen",
+            ),
         ]
 
         for key, value, desc in settings:

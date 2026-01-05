@@ -1022,6 +1022,58 @@ class KIWorkspaceApp:
                                     outputs=[paths_status],
                                 )
 
+                            # Gitignore Required Patterns
+                            with gr.Accordion("🚫 Gitignore Patterns", open=False):
+                                gr.Markdown(
+                                    "Patterns die in jeder .gitignore vorhanden sein müssen. "
+                                    "Ein Pattern pro Zeile (z.B. `/temp`, `*.log`)."
+                                )
+
+                                import json
+
+                                # Patterns aus DB laden
+                                patterns_json = (
+                                    self.db.get_setting("gitignore_required_patterns") or "[]"
+                                )
+                                try:
+                                    patterns_list = json.loads(patterns_json)
+                                except json.JSONDecodeError:
+                                    patterns_list = []
+                                patterns_text = "\n".join(patterns_list)
+
+                                gitignore_patterns_input = gr.Textbox(
+                                    label="Erforderliche Patterns",
+                                    value=patterns_text,
+                                    placeholder="/temp\n*.log\n.env",
+                                    lines=5,
+                                )
+
+                                with gr.Row():
+                                    save_patterns_btn = gr.Button(
+                                        "💾 Patterns speichern", variant="primary"
+                                    )
+                                    patterns_status = gr.Markdown()
+
+                                def save_gitignore_patterns(patterns_text: str) -> str:
+                                    """Speichert die Gitignore-Patterns."""
+                                    import json
+
+                                    lines = [
+                                        line.strip()
+                                        for line in patterns_text.strip().split("\n")
+                                        if line.strip()
+                                    ]
+                                    self.db.set_setting(
+                                        "gitignore_required_patterns", json.dumps(lines)
+                                    )
+                                    return f"✅ {len(lines)} Pattern(s) gespeichert"
+
+                                save_patterns_btn.click(
+                                    fn=save_gitignore_patterns,
+                                    inputs=[gitignore_patterns_input],
+                                    outputs=[patterns_status],
+                                )
+
                         # --- Check-Matrix ---
                         with gr.Tab("📊 Check-Matrix"):
                             gr.Markdown("### Phasen & Release Checks")
