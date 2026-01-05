@@ -758,6 +758,62 @@ class DatabaseManager:
             conn.commit()
             return cursor.rowcount > 0
 
+    def delete_issues_by_external_ids(self, project_id: int, external_ids: list[str]) -> int:
+        """
+        Delete issues by their external IDs (Codacy UUIDs).
+
+        Used during sync to remove issues that have been closed in Codacy.
+
+        Returns:
+            Number of deleted issues.
+        """
+        if not external_ids:
+            return 0
+
+        with self._get_connection() as conn:
+            placeholders = ",".join("?" * len(external_ids))
+            cursor = conn.execute(
+                f"""
+                DELETE FROM issue_meta
+                WHERE project_id = ? AND external_id IN ({placeholders})
+                """,
+                [project_id, *external_ids],
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def clean_pending_ignores_by_external_ids(
+        self, project_id: int, external_ids: list[str]
+    ) -> int:
+        """
+        Clear KI recommendations for issues that have been closed in Codacy.
+
+        This removes the pending ignore status so they don't show up in
+        the Pending Ignores tab anymore.
+
+        Returns:
+            Number of cleaned recommendations.
+        """
+        if not external_ids:
+            return 0
+
+        with self._get_connection() as conn:
+            placeholders = ",".join("?" * len(external_ids))
+            cursor = conn.execute(
+                f"""
+                UPDATE issue_meta SET
+                    ki_recommendation_category = NULL,
+                    ki_recommendation = NULL,
+                    ki_reviewed_by = NULL,
+                    ki_reviewed_at = NULL
+                WHERE project_id = ? AND external_id IN ({placeholders})
+                    AND ki_recommendation IS NOT NULL
+                """,
+                [project_id, *external_ids],
+            )
+            conn.commit()
+            return cursor.rowcount
+
     def update_project_cache(self, project_id: int) -> dict[str, int]:
         """
         Aktualisiert den Dashboard-Cache für ein Projekt.

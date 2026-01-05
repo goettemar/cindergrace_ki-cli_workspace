@@ -259,6 +259,12 @@ class KIWorkspaceApp:
             result += f"📋 Quality Issues: {stats['quality']}\n"
             result += f"📦 Gesamt: {stats['synced']}"
 
+            # Cleanup-Info anzeigen
+            cleaned = stats.get("cleaned", 0)
+            cleaned_pending = stats.get("cleaned_pending", 0)
+            if cleaned or cleaned_pending:
+                result += f"\n\n🧹 Bereinigt: {cleaned} Issues, {cleaned_pending} Pending Ignores"
+
             if stats.get("errors"):
                 result += f"\n\n⚠️ Fehler: {', '.join(stats['errors'])}"
 
@@ -440,9 +446,12 @@ class KIWorkspaceApp:
                 with gr.Tab("📋 Issues (Codacy)"):
                     # Sync-Bereich
                     with gr.Row():
-                        sync_btn = gr.Button("🔄 Sync von Codacy", variant="primary", scale=1)
+                        sync_btn = gr.Button("🔄 Sync von Codacy", variant="primary", scale=2)
+                        dummy_push_btn = gr.Button(
+                            "🚀 Dummy Push (Re-Analyse)", variant="secondary", scale=2
+                        )
                         sync_status = gr.Textbox(
-                            label="Status", interactive=False, scale=3, max_lines=2
+                            label="Status", interactive=False, scale=4, max_lines=2
                         )
 
                     gr.Markdown("---")
@@ -1154,6 +1163,67 @@ class KIWorkspaceApp:
                 fn=update_issues,
                 inputs=filter_inputs,
                 outputs=issues_table,
+            )
+
+            def dummy_push_for_reanalysis(project_id: int | None) -> str:
+                """Trigger Codacy re-analysis with a dummy commit."""
+                import subprocess
+
+                if not project_id:
+                    return "❌ Kein Projekt ausgewählt"
+
+                project = self.db.get_project_by_id(project_id)
+                if not project or not project.path:
+                    return "❌ Projekt-Pfad nicht gefunden"
+
+                project_path = project.path
+                readme_path = f"{project_path}/README.md"
+
+                try:
+                    # Add empty line to README
+                    with open(readme_path, "a", encoding="utf-8") as f:
+                        f.write("\n")
+
+                    # Git commit and push
+                    subprocess.run(
+                        ["git", "add", "README.md"],
+                        cwd=project_path,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    subprocess.run(
+                        [
+                            "git",
+                            "commit",
+                            "-m",
+                            "chore: Trigger Codacy re-analysis\n\n"
+                            "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+                        ],
+                        cwd=project_path,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    subprocess.run(
+                        ["git", "push"],
+                        cwd=project_path,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    return "✅ Dummy Push erfolgreich! Warte ~30s, dann Sync klicken."
+                except subprocess.CalledProcessError as e:
+                    return f"❌ Git-Fehler: {e.stderr or e.stdout or str(e)}"
+                except FileNotFoundError:
+                    return f"❌ README.md nicht gefunden in {project_path}"
+                except Exception as e:
+                    return f"❌ Fehler: {e}"
+
+            dummy_push_btn.click(
+                fn=dummy_push_for_reanalysis,
+                inputs=[project_dropdown],
+                outputs=sync_status,
             )
 
             # === Pending Ignores Tab Event Handlers ===

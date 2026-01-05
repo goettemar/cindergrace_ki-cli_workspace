@@ -380,6 +380,30 @@ class CodacySync:
             logger.error(f"Quality-Sync Fehler: {e}")
             stats["errors"].append(f"Quality: {e}")
 
+        # 3. Geschlossene Issues aus Codacy holen und lokal bereinigen
+        try:
+            closed_items = self.fetch_srm_items(
+                provider,
+                org,
+                repo,
+                statuses=["ClosedOnTime", "ClosedLate", "Ignored"],
+            )
+            closed_ids = {item.get("id") for item in closed_items if item.get("id")}
+
+            if closed_ids:
+                # Lösche lokale Issues die in Codacy geschlossen sind
+                deleted = db.delete_issues_by_external_ids(project.id, list(closed_ids))
+                stats["cleaned"] = deleted
+
+                # Lösche auch Pending Ignores für diese Issues
+                cleaned_pending = db.clean_pending_ignores_by_external_ids(
+                    project.id, list(closed_ids)
+                )
+                stats["cleaned_pending"] = cleaned_pending
+        except Exception as e:
+            logger.error(f"Cleanup-Fehler: {e}")
+            stats["errors"].append(f"Cleanup: {e}")
+
         # Sync-Zeit und Cache aktualisieren
         db.update_project_sync_time(project.id)
         db.update_project_cache(project.id)
