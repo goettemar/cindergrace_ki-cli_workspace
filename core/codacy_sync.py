@@ -392,14 +392,10 @@ class CodacySync:
         # 3. Lokale Issues entfernen die nicht mehr in Codacy existieren
         # (z.B. weil der Code gefixt wurde)
         try:
-            if synced_external_ids:
-                removed = db.delete_issues_not_in_list(project.id, synced_external_ids)
-                stats["removed"] = removed
-                if removed > 0:
-                    logger.info(f"Cleanup: {removed} veraltete Issues entfernt")
-            else:
-                # Keine Issues von Codacy = alle lokal entfernen
-                logger.info("Keine Issues von Codacy - ueberspringe Cleanup")
+            removed = db.delete_issues_not_in_list(project.id, synced_external_ids)
+            stats["removed"] = removed
+            if removed > 0:
+                logger.info(f"Cleanup: {removed} veraltete Issues entfernt")
         except Exception as e:
             logger.error(f"Cleanup-Fehler: {e}")
             stats["errors"].append(f"Cleanup: {e}")
