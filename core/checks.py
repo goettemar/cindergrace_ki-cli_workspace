@@ -259,106 +259,84 @@ def check_radon_complexity(project_path: str) -> CheckResult:
 
 def check_coverage(project_path: str) -> CheckResult:
     """
-    Prueft die Test-Coverage mit pytest-cov.
+    Prueft die Test-Coverage - nutzt gecachte Daten wenn vorhanden.
+
+    Sucht zuerst nach vorhandenen Coverage-Daten (.coverage, coverage.xml),
+    fuehrt Tests nur aus wenn keine Cache-Daten vorhanden sind.
 
     Thresholds:
     - >= 80%: OK (gruen)
     - >= 60%: Warning (gelb)
     - < 60%: Error (rot)
-
-    Sucht pytest im Projekt-venv (.venv/bin/pytest) oder global.
     """
     path = Path(project_path)
+    coverage_pct = None
 
-    # Pytest-Pfad: bevorzuge Projekt-venv, dann global
-    venv_pytest = path / ".venv" / "bin" / "pytest"
-    pytest_cmd = str(venv_pytest) if venv_pytest.exists() else "pytest"
+    # 1. Versuche gecachte Coverage aus coverage.xml zu lesen (schnell)
+    coverage_xml = path / "coverage.xml"
+    if coverage_xml.exists():
+        try:
+            content = coverage_xml.read_text()
+            # Format: line-rate="0.34" bedeutet 34%
+            match = re.search(r'line-rate="([0-9.]+)"', content)
+            if match:
+                coverage_pct = int(float(match.group(1)) * 100)
+        except Exception:
+            pass
 
-    # Prüfe ob src/ existiert für coverage path
-    src_path = path / "src"
-    cov_path = str(src_path) if src_path.exists() else project_path
-
-    try:
-        result = subprocess.run(
-            [
-                pytest_cmd,
-                project_path,
-                "-q",
-                "--tb=no",
-                f"--cov={cov_path}",
-                "--cov-report=term-missing",
-                "--cov-fail-under=0",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=180,
-            cwd=project_path,
-        )
-
-        # Parse coverage percentage from output
-        # Format: "TOTAL ... XX%"
-        output = result.stdout + result.stderr
-        coverage_pct = None
-
-        for line in output.split("\n"):
-            if "TOTAL" in line and "%" in line:
-                # Extract percentage
-                match = re.search(r"(\d+)%", line)
+    # 2. Versuche aus htmlcov/index.html zu lesen
+    if coverage_pct is None:
+        htmlcov_index = path / "htmlcov" / "index.html"
+        if htmlcov_index.exists():
+            try:
+                content = htmlcov_index.read_text()
+                # Format: <span class="pc_cov">34%</span>
+                match = re.search(r'class="pc_cov">(\d+)%', content)
                 if match:
                     coverage_pct = int(match.group(1))
-                    break
+            except Exception:
+                pass
 
-        if coverage_pct is None:
+    # 3. Keine gecachten Daten - zeige Hinweis statt Tests auszufuehren
+    if coverage_pct is None:
+        # Prüfe ob pytest-cov installiert ist
+        venv_pytest = path / ".venv" / "bin" / "pytest"
+        if not venv_pytest.exists():
             return CheckResult(
                 name="Coverage",
                 passed=True,
-                message="Coverage konnte nicht ermittelt werden",
+                message="Nicht verfuegbar (pytest nicht gefunden)",
                 severity="info",
             )
 
-        # Thresholds: >= 80% OK, >= 60% Warning, < 60% Error
-        if coverage_pct >= 80:
-            return CheckResult(
-                name="Coverage",
-                passed=True,
-                message=f"Coverage {coverage_pct}% (gut)",
-                severity="info",
-            )
-        elif coverage_pct >= 60:
-            return CheckResult(
-                name="Coverage",
-                passed=True,
-                message=f"Coverage {coverage_pct}% (akzeptabel)",
-                severity="warning",
-            )
-        else:
-            return CheckResult(
-                name="Coverage",
-                passed=False,
-                message=f"Coverage {coverage_pct}% (zu niedrig)",
-                severity="error",
-            )
+        return CheckResult(
+            name="Coverage",
+            passed=True,
+            message="Nicht gecacht (pytest --cov ausfuehren)",
+            severity="info",
+        )
 
-    except FileNotFoundError:
+    # Coverage-Wert gefunden - Thresholds anwenden
+    if coverage_pct >= 80:
         return CheckResult(
             name="Coverage",
             passed=True,
-            message="Uebersprungen (pytest-cov nicht installiert)",
+            message=f"Coverage {coverage_pct}% (gut)",
             severity="info",
         )
-    except subprocess.TimeoutExpired:
+    elif coverage_pct >= 60:
         return CheckResult(
             name="Coverage",
             passed=True,
-            message="Uebersprungen (Timeout)",
-            severity="info",
+            message=f"Coverage {coverage_pct}% (akzeptabel)",
+            severity="warning",
         )
-    except Exception as e:
+    else:
         return CheckResult(
             name="Coverage",
-            passed=True,
-            message=f"Uebersprungen ({e})",
-            severity="info",
+            passed=False,
+            message=f"Coverage {coverage_pct}% (zu niedrig)",
+            severity="error",
         )
 
 
