@@ -1774,8 +1774,28 @@ class KIWorkspaceApp:
                 else:
                     release_info = "❓ *Nicht geprüft*"
 
-                # Coverage (wird erst nach Check aktualisiert)
+                # Coverage aus Cache lesen (schnell, kein pytest)
                 coverage_info = "*-*"
+                if project.path:
+                    from core.checks import check_coverage
+
+                    cov_result = check_coverage(project.path)
+                    if "%" in cov_result.message:
+                        import re
+
+                        match = re.search(r"(\d+)%", cov_result.message)
+                        if match:
+                            pct = int(match.group(1))
+                            if pct >= 80:
+                                coverage_info = f"🟢 **{pct}%**"
+                            elif pct >= 60:
+                                coverage_info = f"🟡 **{pct}%**"
+                            else:
+                                coverage_info = f"🔴 **{pct}%**"
+                    elif "Nicht gecacht" in cov_result.message:
+                        coverage_info = "❓ *Nicht gecacht*"
+                    elif "Nicht verfuegbar" in cov_result.message:
+                        coverage_info = "*-*"
 
                 return (
                     gr.update(visible=True),
