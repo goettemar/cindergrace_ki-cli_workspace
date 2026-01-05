@@ -836,6 +836,80 @@ def check_code_english(project_path: str) -> CheckResult:
     )
 
 
+def check_gradio_share(project_path: str) -> CheckResult:
+    """
+    Prueft ob Gradio-Apps share=False haben.
+
+    share=True exponiert die App oeffentlich ueber Gradio-Server,
+    was ein Sicherheitsrisiko darstellt.
+
+    Args:
+        project_path: Pfad zum Projekt
+
+    Returns:
+        CheckResult mit Share-Status
+    """
+    path = Path(project_path)
+    skip_dirs = {".venv", "venv", "__pycache__", "node_modules", "build", "dist"}
+
+    # Suche nach Gradio-Verwendung
+    gradio_files = []
+    share_true_files = []
+
+    py_files = list(path.glob("**/*.py"))
+    for py_file in py_files[:100]:
+        # Skip irrelevante Verzeichnisse
+        if any(skip_dir in py_file.parts for skip_dir in skip_dirs):
+            continue
+
+        try:
+            content = py_file.read_text(encoding="utf-8", errors="ignore")
+
+            # Pruefen ob Gradio verwendet wird
+            if "import gradio" in content or "from gradio" in content or "gr.Blocks" in content:
+                gradio_files.append(py_file)
+
+                # Suche nach share=True (verschiedene Patterns)
+                # .launch(share=True), launch(share=True), share = True vor launch
+                share_patterns = [
+                    r"\.launch\([^)]*share\s*=\s*True",
+                    r"share\s*=\s*True",
+                ]
+                for pattern in share_patterns:
+                    if re.search(pattern, content):
+                        rel_path = py_file.relative_to(path)
+                        share_true_files.append(str(rel_path))
+                        break
+
+        except Exception:
+            continue
+
+    # Keine Gradio-App gefunden
+    if not gradio_files:
+        return CheckResult(
+            name="Gradio Share",
+            passed=True,
+            message="Keine Gradio-App gefunden (uebersprungen)",
+            severity="info",
+        )
+
+    # share=True gefunden
+    if share_true_files:
+        return CheckResult(
+            name="Gradio Share",
+            passed=False,
+            message=f"share=True in: {', '.join(share_true_files[:3])}",
+            severity="error",
+        )
+
+    return CheckResult(
+        name="Gradio Share",
+        passed=True,
+        message=f"Alle {len(gradio_files)} Gradio-Dateien haben share=False",
+        severity="error",
+    )
+
+
 def check_readme_status(project_path: str, expected_phase: str) -> CheckResult:
     """
     Prueft ob README-Status mit Workspace-Phase uebereinstimmt.
@@ -935,6 +1009,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
         "i18n Support": lambda: check_i18n(project.path),
         "Code English": lambda: check_code_english(project.path),
         "pyproject.toml English": lambda: check_pyproject_english(project.path),
+        "Gradio Share": lambda: check_gradio_share(project.path),
     }
 
     # Phase-Info fuer README Status Check
@@ -986,6 +1061,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
             "Code English": "warning",
             "pyproject.toml English": "warning",
             "Gitignore Patterns": "warning",
+            "Gradio Share": "error",
         }
 
     # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)
@@ -1041,6 +1117,7 @@ def run_phase_checks(
         "i18n Support": lambda: check_i18n(project.path),
         "Code English": lambda: check_code_english(project.path),
         "pyproject.toml English": lambda: check_pyproject_english(project.path),
+        "Gradio Share": lambda: check_gradio_share(project.path),
     }
 
     # Phase-Info fuer README Status Check

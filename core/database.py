@@ -489,6 +489,30 @@ class DatabaseManager:
                             (phase_id, 1 if enabled else 0, severity),
                         )
 
+            # Migration: Gradio Share Check zu check_matrix hinzufuegen falls nicht vorhanden
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM check_matrix WHERE check_name = 'Gradio Share'"
+            )
+            if cursor.fetchone()[0] == 0:
+                cursor = conn.execute("SELECT id, name FROM project_phases")
+                phase_ids = {row["name"]: row["id"] for row in cursor.fetchall()}
+                gradio_configs = [
+                    ("initial", False, "info"),
+                    ("development", True, "warning"),
+                    ("refactoring", True, "warning"),
+                    ("testing", True, "error"),
+                    ("final", True, "error"),
+                ]
+                for phase_name, enabled, severity in gradio_configs:
+                    phase_id = phase_ids.get(phase_name)
+                    if phase_id:
+                        conn.execute(
+                            """INSERT INTO check_matrix
+                               (phase_id, check_name, enabled, severity, description)
+                               VALUES (?, 'Gradio Share', ?, ?, 'Gradio share=False (kein Public Sharing)')""",
+                            (phase_id, 1 if enabled else 0, severity),
+                        )
+
             # KI-FAQ Tabelle
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ki_faq (
