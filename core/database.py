@@ -715,6 +715,49 @@ class DatabaseManager:
             )
             conn.commit()
 
+    def update_issue_details_by_result_id(
+        self,
+        project_id: int,
+        codacy_result_id: str,
+        file_path: str,
+        line_number: int,
+        tool: str,
+        rule: str,
+    ) -> bool:
+        """
+        Update issue details (file_path, line_number, tool, rule) by codacy_result_id.
+
+        Used for deduplication: when a Quality issue matches an existing SRM issue,
+        we update the SRM issue with the additional details instead of creating a duplicate.
+
+        Returns:
+            True if an issue was updated, False otherwise.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE issue_meta SET
+                    file_path = COALESCE(NULLIF(?, ''), file_path),
+                    line_number = CASE WHEN ? > 0 THEN ? ELSE line_number END,
+                    tool = COALESCE(NULLIF(?, ''), tool),
+                    rule = COALESCE(NULLIF(?, ''), rule),
+                    synced_at = ?
+                WHERE project_id = ? AND codacy_result_id = ?
+                """,
+                (
+                    file_path,
+                    line_number,
+                    line_number,
+                    tool,
+                    rule,
+                    datetime.now().isoformat(),
+                    project_id,
+                    codacy_result_id,
+                ),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def update_project_cache(self, project_id: int) -> dict[str, int]:
         """
         Aktualisiert den Dashboard-Cache für ein Projekt.

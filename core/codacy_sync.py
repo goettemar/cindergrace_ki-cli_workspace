@@ -330,10 +330,30 @@ class CodacySync:
             logger.error(f"SRM-Sync Fehler: {e}")
             stats["errors"].append(f"SRM: {e}")
 
-        # 2. Quality Issues holen
+        # 2. Quality Issues holen (nur wenn nicht bereits als SRM vorhanden)
+        # Sammle alle resultDataIds der SRM-Items für Deduplizierung
+        srm_result_ids = {
+            item.get("itemSourceId") for item in srm_items if item.get("itemSourceId")
+        }
+
         try:
             quality_items = self.fetch_quality_issues(provider, org, repo)
             for item in quality_items:
+                result_data_id = str(item.get("resultDataId", ""))
+
+                # Skip wenn bereits als SRM-Issue vorhanden (Deduplizierung)
+                if result_data_id and result_data_id in srm_result_ids:
+                    # Update nur file_path/line_number/tool im existierenden SRM-Issue
+                    db.update_issue_details_by_result_id(
+                        project_id=project.id,
+                        codacy_result_id=result_data_id,
+                        file_path=item.get("filePath", ""),
+                        line_number=item.get("lineNumber", 0),
+                        tool=item.get("toolInfo", {}).get("name", ""),
+                        rule=item.get("patternInfo", {}).get("id", ""),
+                    )
+                    continue
+
                 pattern_info = item.get("patternInfo", {})
                 tool_info = item.get("toolInfo", {})
                 level = pattern_info.get("severityLevel", "Medium")
@@ -341,6 +361,7 @@ class CodacySync:
                 issue = Issue(
                     project_id=project.id,
                     external_id=item.get("issueId", ""),
+                    codacy_result_id=result_data_id,
                     priority=priority_map.get(level, "Medium"),
                     status="open",
                     scan_type="SAST",
