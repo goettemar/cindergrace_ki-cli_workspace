@@ -6,6 +6,7 @@ Prueft ob ein Projekt bereit fuer Release/Publikation ist.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -151,12 +152,30 @@ def check_radon_complexity(project_path: str) -> CheckResult:
     Prueft die Cyclomatic Complexity mit radon.
 
     Fails wenn Funktionen mit Complexity >= B (6-10) gefunden werden.
-    Wird uebersprungen wenn radon nicht installiert ist.
+    Sucht radon im Projekt-venv (.venv/bin/radon) oder global.
     """
+    path = Path(project_path)
+
+    # Radon-Pfad: bevorzuge Projekt-venv, dann global
+    venv_radon = path / ".venv" / "bin" / "radon"
+    radon_cmd = str(venv_radon) if venv_radon.exists() else "radon"
+
+    # Prüfe nur src/ falls vorhanden, sonst Projekt-Root (ohne .venv)
+    src_path = path / "src"
+    check_path = str(src_path) if src_path.exists() else project_path
+
     try:
-        # Pruefen ob radon installiert ist
         result = subprocess.run(
-            ["radon", "cc", project_path, "-a", "-s", "--total-average"],
+            [
+                radon_cmd,
+                "cc",
+                check_path,
+                "-a",
+                "-s",
+                "--total-average",
+                "--exclude",
+                ".venv,venv,node_modules,__pycache__",
+            ],
             capture_output=True,
             text=True,
             timeout=60,
@@ -173,28 +192,46 @@ def check_radon_complexity(project_path: str) -> CheckResult:
 
         output = result.stdout
 
-        # Suche nach hoher Complexity (B oder schlechter)
-        # radon gibt z.B. "Average complexity: A (2.5)" aus
-        bad_grades = ["B", "C", "D", "E", "F"]
-        has_bad = any(f" {grade} " in output or f"({grade})" in output for grade in bad_grades)
+        # Complexity-Stufen:
+        # A-B (1-10): OK - gut handhabbar fuer KIs
+        # C (11-20): Warnung - sollte refaktoriert werden
+        # D-F (21+): Fehler - muss refaktoriert werden
+        error_grades = ["D", "E", "F"]  # Fehler
+        warn_grades = ["C"]  # Warnung
+        error_patterns = [f" - {g} (" for g in error_grades]
+        warn_patterns = [f" - {g} (" for g in warn_grades]
 
-        if has_bad:
-            # Zaehle problematische Funktionen
-            lines = [
-                line for line in output.split("\n") if any(f" {g} " in line for g in bad_grades)
-            ]
+        # Zaehle problematische Funktionen
+        error_lines = [
+            line
+            for line in output.split("\n")
+            if any(pattern in line for pattern in error_patterns)
+        ]
+        warn_lines = [
+            line for line in output.split("\n") if any(pattern in line for pattern in warn_patterns)
+        ]
+
+        if error_lines:
             return CheckResult(
                 name="Radon Complexity",
                 passed=False,
-                message=f"{len(lines)} Funktion(en) mit hoher Complexity",
+                message=f"{len(error_lines)} Funktion(en) mit sehr hoher Complexity (D+)",
+                severity="error",
+            )
+
+        if warn_lines:
+            return CheckResult(
+                name="Radon Complexity",
+                passed=True,
+                message=f"{len(warn_lines)} Funktion(en) mit Complexity C (refactoring empfohlen)",
                 severity="warning",
             )
 
         return CheckResult(
             name="Radon Complexity",
             passed=True,
-            message="Complexity OK (alle A)",
-            severity="warning",
+            message="Complexity OK (A-B)",
+            severity="info",
         )
 
     except FileNotFoundError:
@@ -220,11 +257,116 @@ def check_radon_complexity(project_path: str) -> CheckResult:
         )
 
 
+def check_coverage(project_path: str) -> CheckResult:
+    """
+    Prueft die Test-Coverage mit pytest-cov.
+
+    Thresholds:
+    - >= 80%: OK (gruen)
+    - >= 60%: Warning (gelb)
+    - < 60%: Error (rot)
+
+    Sucht pytest im Projekt-venv (.venv/bin/pytest) oder global.
+    """
+    path = Path(project_path)
+
+    # Pytest-Pfad: bevorzuge Projekt-venv, dann global
+    venv_pytest = path / ".venv" / "bin" / "pytest"
+    pytest_cmd = str(venv_pytest) if venv_pytest.exists() else "pytest"
+
+    # Prüfe ob src/ existiert für coverage path
+    src_path = path / "src"
+    cov_path = str(src_path) if src_path.exists() else project_path
+
+    try:
+        result = subprocess.run(
+            [
+                pytest_cmd,
+                project_path,
+                "-q",
+                "--tb=no",
+                f"--cov={cov_path}",
+                "--cov-report=term-missing",
+                "--cov-fail-under=0",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            cwd=project_path,
+        )
+
+        # Parse coverage percentage from output
+        # Format: "TOTAL ... XX%"
+        output = result.stdout + result.stderr
+        coverage_pct = None
+
+        for line in output.split("\n"):
+            if "TOTAL" in line and "%" in line:
+                # Extract percentage
+                match = re.search(r"(\d+)%", line)
+                if match:
+                    coverage_pct = int(match.group(1))
+                    break
+
+        if coverage_pct is None:
+            return CheckResult(
+                name="Coverage",
+                passed=True,
+                message="Coverage konnte nicht ermittelt werden",
+                severity="info",
+            )
+
+        # Thresholds: >= 80% OK, >= 60% Warning, < 60% Error
+        if coverage_pct >= 80:
+            return CheckResult(
+                name="Coverage",
+                passed=True,
+                message=f"Coverage {coverage_pct}% (gut)",
+                severity="info",
+            )
+        elif coverage_pct >= 60:
+            return CheckResult(
+                name="Coverage",
+                passed=True,
+                message=f"Coverage {coverage_pct}% (akzeptabel)",
+                severity="warning",
+            )
+        else:
+            return CheckResult(
+                name="Coverage",
+                passed=False,
+                message=f"Coverage {coverage_pct}% (zu niedrig)",
+                severity="error",
+            )
+
+    except FileNotFoundError:
+        return CheckResult(
+            name="Coverage",
+            passed=True,
+            message="Uebersprungen (pytest-cov nicht installiert)",
+            severity="info",
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            name="Coverage",
+            passed=True,
+            message="Uebersprungen (Timeout)",
+            severity="info",
+        )
+    except Exception as e:
+        return CheckResult(
+            name="Coverage",
+            passed=True,
+            message=f"Uebersprungen ({e})",
+            severity="info",
+        )
+
+
 def check_tests(project_path: str) -> CheckResult:
     """
     Prueft ob Tests vorhanden sind und bestehen.
 
-    Sucht nach pytest, unittest oder tests/ Verzeichnis.
+    Sucht nach pytest im Projekt-venv (.venv/bin/pytest) oder global.
     """
     path = Path(project_path)
 
@@ -243,10 +385,14 @@ def check_tests(project_path: str) -> CheckResult:
                 severity="warning",
             )
 
+    # Pytest-Pfad: bevorzuge Projekt-venv, dann global
+    venv_pytest = path / ".venv" / "bin" / "pytest"
+    pytest_cmd = str(venv_pytest) if venv_pytest.exists() else "pytest"
+
     # Versuche pytest auszufuehren
     try:
         result = subprocess.run(
-            ["pytest", project_path, "-q", "--tb=no", "-x"],
+            [pytest_cmd, project_path, "-q", "--tb=no", "-x"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -566,6 +712,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
         "CHANGELOG": lambda: check_changelog(project.path),
         "Radon Complexity": lambda: check_radon_complexity(project.path),
         "Tests": lambda: check_tests(project.path),
+        "Coverage": lambda: check_coverage(project.path),
         "Git Status": lambda: check_git_status(project.path),
         "README English": lambda: check_readme_english(project.path),
         "Hobby Notice": lambda: check_hobby_notice(project.path),
@@ -593,6 +740,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
             "CHANGELOG": "warning",
             "Radon Complexity": "warning",
             "Tests": "error",
+            "Coverage": "warning",
             "Git Status": "warning",
             "Critical Issues": "error",
             "High Issues": "warning",
@@ -648,6 +796,7 @@ def run_phase_checks(
         "CHANGELOG": lambda: check_changelog(project.path),
         "Radon Complexity": lambda: check_radon_complexity(project.path),
         "Tests": lambda: check_tests(project.path),
+        "Coverage": lambda: check_coverage(project.path),
         "Git Status": lambda: check_git_status(project.path),
         "README English": lambda: check_readme_english(project.path),
         "Hobby Notice": lambda: check_hobby_notice(project.path),

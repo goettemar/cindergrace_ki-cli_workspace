@@ -411,17 +411,23 @@ class KIWorkspaceApp:
                         # Info-Zeile: Pfad, GitHub, Codacy kompakt
                         dash_detail_info = gr.Markdown("*Wähle ein Projekt*")
 
-                        # 3-Spalten Layout: Release | Critical | High
+                        # Tabellarisches Layout: Label | Status | (Reserve)
                         with gr.Row():
-                            with gr.Column(scale=1):
-                                gr.Markdown("##### ✓ Release Check")
-                                dash_release_info = gr.Markdown("*-*")
-                            with gr.Column(scale=1):
-                                gr.Markdown("##### 🔴 Critical Issues")
-                                dash_critical_list = gr.Markdown("*Keine*")
-                            with gr.Column(scale=1):
-                                gr.Markdown("##### 🟠 High Issues")
-                                dash_high_list = gr.Markdown("*Keine*")
+                            gr.Markdown("**✓ Release Check**")
+                            dash_release_info = gr.Markdown("*-*")
+                            gr.Markdown("")  # Spalte 3 Reserve
+                        with gr.Row():
+                            gr.Markdown("**🔴 Critical Issues**")
+                            dash_critical_list = gr.Markdown("*Keine*")
+                            gr.Markdown("")  # Spalte 3 Reserve
+                        with gr.Row():
+                            gr.Markdown("**🟠 High Issues**")
+                            dash_high_list = gr.Markdown("*Keine*")
+                            gr.Markdown("")  # Spalte 3 Reserve
+                        with gr.Row():
+                            gr.Markdown("**📊 Coverage**")
+                            dash_coverage = gr.Markdown("*-*")
+                            gr.Markdown("")  # Spalte 3 Reserve
 
                         dash_detail_msg = gr.Markdown("")
 
@@ -1671,6 +1677,7 @@ class KIWorkspaceApp:
                         "*Keine*",
                         "*Keine*",
                         "*-*",
+                        "*-*",
                         "",
                     )
 
@@ -1682,6 +1689,7 @@ class KIWorkspaceApp:
                         "*Projekt nicht gefunden*",
                         "*Keine*",
                         "*Keine*",
+                        "*-*",
                         "*-*",
                         "",
                     )
@@ -1746,28 +1754,17 @@ class KIWorkspaceApp:
                 else:
                     high_list = "✅ Keine"
 
-                # Release Check Info (kompakt)
+                # Release Check Info (nur Zähler)
                 if project.cache_release_total > 0:
                     passed = project.cache_release_passed
                     total = project.cache_release_total
                     status_icon = "✅" if project.cache_release_ready else "⚠️"
-
-                    # Checks einzeln laden
-                    if project.path:
-                        from core.checks import run_all_checks
-
-                        results = run_all_checks(self.db, project)
-                        check_lines = []
-                        for r in results:
-                            icon = "✅" if r.passed else "❌"
-                            check_lines.append(f"{icon} {r.name}")
-                        release_info = f"{status_icon} **{passed}/{total}**\n\n" + "\n".join(
-                            check_lines
-                        )
-                    else:
-                        release_info = f"{status_icon} **{passed}/{total}**"
+                    release_info = f"{status_icon} **{passed}/{total}**"
                 else:
                     release_info = "❓ *Nicht geprüft*"
+
+                # Coverage (wird erst nach Check aktualisiert)
+                coverage_info = "*-*"
 
                 return (
                     gr.update(visible=True),
@@ -1776,6 +1773,7 @@ class KIWorkspaceApp:
                     critical_list,
                     high_list,
                     release_info,
+                    coverage_info,
                     "",
                 )
 
@@ -1793,7 +1791,7 @@ class KIWorkspaceApp:
                             return project_id, *load_project_details(project_id)
                 except Exception as e:
                     logger.error(f"Dashboard select error: {e}")
-                return None, gr.update(visible=False), "", "", "", "", "", ""
+                return None, gr.update(visible=False), "", "", "", "", "", "*-*", ""
 
             def dash_sync_project(project_id):
                 """Sync für ausgewähltes Projekt."""
@@ -1805,11 +1803,11 @@ class KIWorkspaceApp:
             def dash_check_project(project_id):
                 """Release Check für ausgewähltes Projekt."""
                 if not project_id:
-                    return "*Noch nicht geprüft*", "⚠️ Kein Projekt ausgewählt"
+                    return "*Noch nicht geprüft*", "*-*", "⚠️ Kein Projekt ausgewählt"
 
                 project = self.db.get_project(project_id)
                 if not project or not project.path:
-                    return "*Projekt hat keinen Pfad*", "⚠️ Kein Pfad konfiguriert"
+                    return "*Projekt hat keinen Pfad*", "*-*", "⚠️ Kein Pfad konfiguriert"
 
                 from core.checks import run_all_checks
 
@@ -1820,16 +1818,32 @@ class KIWorkspaceApp:
                 # Cache aktualisieren
                 self.db.update_release_cache(project_id, passed, total, passed == total)
 
-                # Ergebnis formatieren
-                status_icon = "✅" if passed == total else "⚠️"
-                release_info = f"{status_icon} **{passed}/{total}** Checks bestanden\n\n"
-                check_items = []
+                # Coverage aus Ergebnissen extrahieren
+                coverage_info = "*-*"
                 for r in results:
-                    icon = "✅" if r.passed else ("⚠️" if r.severity == "warning" else "❌")
-                    check_items.append(f"{icon} {r.name}")
-                release_info += " | ".join(check_items)
+                    if r.name == "Coverage":
+                        # Farbkodierung basierend auf severity
+                        if "%" in r.message:
+                            import re
 
-                return release_info, f"✅ Check abgeschlossen ({passed}/{total})"
+                            match = re.search(r"(\d+)%", r.message)
+                            if match:
+                                pct = int(match.group(1))
+                                if pct >= 80:
+                                    coverage_info = f"🟢 **{pct}%**"
+                                elif pct >= 60:
+                                    coverage_info = f"🟡 **{pct}%**"
+                                else:
+                                    coverage_info = f"🔴 **{pct}%**"
+                        else:
+                            coverage_info = r.message
+                        break
+
+                # Ergebnis formatieren (nur Zähler)
+                status_icon = "✅" if passed == total else "⚠️"
+                release_info = f"{status_icon} **{passed}/{total}**"
+
+                return release_info, coverage_info, f"✅ Check abgeschlossen ({passed}/{total})"
 
             # Dashboard Table Select Handler
             dashboard_table.select(
@@ -1843,6 +1857,7 @@ class KIWorkspaceApp:
                     dash_critical_list,
                     dash_high_list,
                     dash_release_info,
+                    dash_coverage,
                     dash_detail_msg,
                 ],
             )
@@ -1864,7 +1879,7 @@ class KIWorkspaceApp:
             dash_check_btn.click(
                 fn=dash_check_project,
                 inputs=[dash_selected_id],
-                outputs=[dash_release_info, dash_detail_msg],
+                outputs=[dash_release_info, dash_coverage, dash_detail_msg],
             ).then(
                 fn=load_dashboard_data,
                 outputs=[dashboard_table],
