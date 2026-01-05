@@ -704,19 +704,16 @@ class KIWorkspaceApp:
                         return gr.update(choices=choices, value=project.phase_id)
 
                     def save_project_phase(project_id: int | None, phase_id: int | None):
-                        """Speichert die Phase eines Projekts."""
+                        """Speichert die Phase eines Projekts und aktualisiert README."""
                         if not project_id:
                             return "❌ Kein Projekt ausgewählt"
                         if not phase_id:
                             return "❌ Keine Phase ausgewählt"
-                        project = self.db.get_project(project_id)
-                        if not project:
-                            return "❌ Projekt nicht gefunden"
-                        project.phase_id = phase_id
-                        self.db.update_project(project)
-                        phase = self.db.get_phase(phase_id)
-                        phase_name = phase.display_name if phase else "Unbekannt"
-                        return f"✅ Phase **{phase_name}** gespeichert"
+                        # set_project_phase aktualisiert auch die README
+                        success, msg = self.db.set_project_phase(project_id, phase_id)
+                        if success:
+                            return f"✅ {msg}"
+                        return f"❌ {msg}"
 
                     def get_phase_description(phase_id: int | None):
                         """Gibt die Beschreibung einer Phase zurück."""
