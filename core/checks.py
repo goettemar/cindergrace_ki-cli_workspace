@@ -463,6 +463,44 @@ def check_i18n(project_path: str) -> CheckResult:
     )
 
 
+def check_pyproject_english(project_path: str) -> CheckResult:
+    """Check if pyproject.toml has English description and metadata."""
+    path = Path(project_path)
+    pyproject_path = path / "pyproject.toml"
+
+    if not pyproject_path.exists():
+        return CheckResult(
+            name="pyproject.toml English",
+            passed=True,
+            message="No pyproject.toml found (skipped)",
+            severity="info",
+        )
+
+    german_chars = "äöüÄÖÜß"
+    try:
+        content = pyproject_path.read_text(encoding="utf-8", errors="ignore")
+        if any(c in content for c in german_chars):
+            return CheckResult(
+                name="pyproject.toml English",
+                passed=False,
+                message="pyproject.toml contains German characters",
+                severity="warning",
+            )
+        return CheckResult(
+            name="pyproject.toml English",
+            passed=True,
+            message="pyproject.toml is in English",
+            severity="warning",
+        )
+    except Exception:
+        return CheckResult(
+            name="pyproject.toml English",
+            passed=True,
+            message="Could not read pyproject.toml (skipped)",
+            severity="info",
+        )
+
+
 def check_code_english(project_path: str) -> CheckResult:
     """Check if Python code is written in English (no German in comments/docstrings)."""
     path = Path(project_path)
@@ -533,6 +571,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
         "Hobby Notice": lambda: check_hobby_notice(project.path),
         "i18n Support": lambda: check_i18n(project.path),
         "Code English": lambda: check_code_english(project.path),
+        "pyproject.toml English": lambda: check_pyproject_english(project.path),
     }
 
     # DB-basierte Checks
@@ -561,6 +600,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
             "Hobby Notice": "warning",
             "i18n Support": "warning",
             "Code English": "warning",
+            "pyproject.toml English": "warning",
         }
 
     # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)
@@ -613,6 +653,7 @@ def run_phase_checks(
         "Hobby Notice": lambda: check_hobby_notice(project.path),
         "i18n Support": lambda: check_i18n(project.path),
         "Code English": lambda: check_code_english(project.path),
+        "pyproject.toml English": lambda: check_pyproject_english(project.path),
     }
 
     # DB-basierte Checks
