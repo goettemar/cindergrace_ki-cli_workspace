@@ -343,6 +343,167 @@ def check_git_status(project_path: str) -> CheckResult:
         )
 
 
+def check_readme_english(project_path: str) -> CheckResult:
+    """Check if README is written in English (no German umlauts outside quotes)."""
+    path = Path(project_path)
+    readme_files = ["README.md", "README.txt", "README", "README.rst"]
+
+    for rf in readme_files:
+        readme_path = path / rf
+        if readme_path.exists():
+            content = readme_path.read_text(encoding="utf-8", errors="ignore")
+            # Check for German characters outside of code blocks and quotes
+            german_chars = "äöüÄÖÜß"
+            has_german = any(c in content for c in german_chars)
+
+            if has_german:
+                return CheckResult(
+                    name="README English",
+                    passed=False,
+                    message=f"{rf} contains German characters",
+                    severity="warning",
+                )
+            return CheckResult(
+                name="README English",
+                passed=True,
+                message=f"{rf} is in English",
+                severity="warning",
+            )
+
+    return CheckResult(
+        name="README English",
+        passed=True,
+        message="No README found (skipped)",
+        severity="info",
+    )
+
+
+def check_hobby_notice(project_path: str) -> CheckResult:
+    """Check if README contains hobby/experimental project notice."""
+    path = Path(project_path)
+    readme_files = ["README.md", "README.txt", "README", "README.rst"]
+
+    hobby_keywords = [
+        "hobby",
+        "experimental",
+        "experiment",
+        "not a commercial",
+        "no warranties",
+        "no support",
+        "Hobby",
+        "Experimental",
+    ]
+
+    for rf in readme_files:
+        readme_path = path / rf
+        if readme_path.exists():
+            content = readme_path.read_text(encoding="utf-8", errors="ignore").lower()
+            has_notice = any(kw.lower() in content for kw in hobby_keywords)
+
+            if has_notice:
+                return CheckResult(
+                    name="Hobby Notice",
+                    passed=True,
+                    message="Hobby/experimental notice found",
+                    severity="warning",
+                )
+            return CheckResult(
+                name="Hobby Notice",
+                passed=False,
+                message=f"{rf} missing hobby/experimental notice",
+                severity="warning",
+            )
+
+    return CheckResult(
+        name="Hobby Notice",
+        passed=True,
+        message="No README found (skipped)",
+        severity="info",
+    )
+
+
+def check_i18n(project_path: str) -> CheckResult:
+    """Check if project has internationalization (i18n) support."""
+    path = Path(project_path)
+
+    # Check for translations directory
+    trans_dirs = ["translations", "locales", "i18n", "locale"]
+    has_trans_dir = any((path / td).exists() for td in trans_dirs)
+    has_trans_in_src = any(
+        (path / "src").glob(f"**/{td}") for td in trans_dirs if (path / "src").exists()
+    )
+
+    # Check for i18n imports in Python files
+    i18n_imports = ["gradio_i18n", "gettext", "babel", "i18n"]
+    has_i18n_import = False
+
+    py_files = list(path.glob("**/*.py"))
+    for py_file in py_files[:50]:  # Limit to avoid timeout
+        try:
+            content = py_file.read_text(encoding="utf-8", errors="ignore")
+            if any(imp in content for imp in i18n_imports):
+                has_i18n_import = True
+                break
+        except Exception:
+            continue
+
+    if has_trans_dir or has_trans_in_src or has_i18n_import:
+        return CheckResult(
+            name="i18n Support",
+            passed=True,
+            message="i18n/translations found",
+            severity="warning",
+        )
+
+    return CheckResult(
+        name="i18n Support",
+        passed=False,
+        message="No i18n/translations found",
+        severity="warning",
+    )
+
+
+def check_code_english(project_path: str) -> CheckResult:
+    """Check if Python code is written in English (no German in comments/docstrings)."""
+    path = Path(project_path)
+    german_chars = "äöüÄÖÜß"
+
+    # Directories to skip (translations are allowed to have German)
+    skip_dirs = {"translations", "locales", "i18n", "locale", ".venv", "venv", "__pycache__"}
+
+    issues_found = []
+    py_files = list(path.glob("**/*.py"))
+
+    for py_file in py_files[:100]:  # Limit to avoid timeout
+        # Skip translation directories
+        if any(skip_dir in py_file.parts for skip_dir in skip_dirs):
+            continue
+
+        try:
+            content = py_file.read_text(encoding="utf-8", errors="ignore")
+            if any(c in content for c in german_chars):
+                rel_path = py_file.relative_to(path)
+                issues_found.append(str(rel_path))
+        except Exception:
+            continue
+
+    if issues_found:
+        count = len(issues_found)
+        return CheckResult(
+            name="Code English",
+            passed=False,
+            message=f"{count} file(s) with German text",
+            severity="warning",
+        )
+
+    return CheckResult(
+        name="Code English",
+        passed=True,
+        message="Code is in English",
+        severity="warning",
+    )
+
+
 def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
     """
     Fuehrt Release Readiness Checks basierend auf der Projekt-Phase aus.
@@ -368,6 +529,10 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
         "Radon Complexity": lambda: check_radon_complexity(project.path),
         "Tests": lambda: check_tests(project.path),
         "Git Status": lambda: check_git_status(project.path),
+        "README English": lambda: check_readme_english(project.path),
+        "Hobby Notice": lambda: check_hobby_notice(project.path),
+        "i18n Support": lambda: check_i18n(project.path),
+        "Code English": lambda: check_code_english(project.path),
     }
 
     # DB-basierte Checks
@@ -392,6 +557,10 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
             "Git Status": "warning",
             "Critical Issues": "error",
             "High Issues": "warning",
+            "README English": "warning",
+            "Hobby Notice": "warning",
+            "i18n Support": "warning",
+            "Code English": "warning",
         }
 
     # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)
@@ -440,6 +609,10 @@ def run_phase_checks(
         "Radon Complexity": lambda: check_radon_complexity(project.path),
         "Tests": lambda: check_tests(project.path),
         "Git Status": lambda: check_git_status(project.path),
+        "README English": lambda: check_readme_english(project.path),
+        "Hobby Notice": lambda: check_hobby_notice(project.path),
+        "i18n Support": lambda: check_i18n(project.path),
+        "Code English": lambda: check_code_english(project.path),
     }
 
     # DB-basierte Checks
