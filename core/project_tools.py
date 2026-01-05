@@ -255,7 +255,7 @@ def run_ruff_fix(project_path: str) -> tuple[bool, str, int]:
     output_lines = []
     files_changed = 0
 
-    # 1. ruff check --fix
+    # 1. ruff check --fix (E501 ignorieren - ruff format macht das)
     try:
         result = subprocess.run(
             [
@@ -263,6 +263,8 @@ def run_ruff_fix(project_path: str) -> tuple[bool, str, int]:
                 "check",
                 check_path,
                 "--fix",
+                "--ignore",
+                "E501",  # Line too long - wird von ruff format behandelt
                 "--exclude",
                 ".venv,venv,node_modules,__pycache__,build,dist",
             ],
