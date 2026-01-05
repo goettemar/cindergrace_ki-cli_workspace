@@ -1063,10 +1063,15 @@ class KIWorkspaceApp:
                                 "und wie wichtig sie sind (Blocker vs. Empfohlen)."
                             )
 
-                            # Phase-Auswahl
+                            # Phase-Auswahl - Phasen direkt laden
+                            def load_matrix_phases():
+                                """Lädt Phasen für Matrix-Dropdown."""
+                                phases = self.db.get_all_phases()
+                                return [(f"{p.display_name} ({p.name})", p.id) for p in phases]
+
                             matrix_phase_dropdown = gr.Dropdown(
                                 label="Phase auswählen",
-                                choices=[],
+                                choices=load_matrix_phases(),
                                 value=None,
                                 interactive=True,
                             )
@@ -1083,11 +1088,6 @@ class KIWorkspaceApp:
                                     "💾 Matrix speichern", variant="primary"
                                 )
                                 matrix_status = gr.Markdown()
-
-                            def load_matrix_phases():
-                                """Lädt Phasen für Matrix-Dropdown."""
-                                phases = self.db.get_all_phases()
-                                return [(f"{p.display_name} ({p.name})", p.id) for p in phases]
 
                             def load_matrix_for_phase(phase_id: int | None):
                                 """Lädt die Check-Matrix für eine Phase."""
@@ -1141,11 +1141,6 @@ class KIWorkspaceApp:
                                 inputs=[matrix_phase_dropdown, matrix_table],
                                 outputs=[matrix_status],
                             )
-
-                            # Phasen beim Tab-Load
-                            @matrix_phase_dropdown.select
-                            def update_phases():
-                                return gr.update(choices=load_matrix_phases())
 
                         # --- Über ---
                         with gr.Tab("ℹ️ Über"):

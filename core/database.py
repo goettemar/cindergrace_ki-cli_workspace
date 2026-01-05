@@ -1631,14 +1631,14 @@ class DatabaseManager:
     def update_check_matrix_entry(
         self, phase_id: int, check_name: str, enabled: bool, severity: str
     ) -> None:
-        """Aktualisiert einen Eintrag in der Check-Matrix."""
+        """Aktualisiert oder erstellt einen Eintrag in der Check-Matrix."""
         with self._get_connection() as conn:
             conn.execute(
                 """
-                UPDATE check_matrix SET enabled = ?, severity = ?
-                WHERE phase_id = ? AND check_name = ?
+                INSERT OR REPLACE INTO check_matrix (phase_id, check_name, enabled, severity)
+                VALUES (?, ?, ?, ?)
                 """,
-                (1 if enabled else 0, severity, phase_id, check_name),
+                (phase_id, check_name, 1 if enabled else 0, severity),
             )
             conn.commit()
 
