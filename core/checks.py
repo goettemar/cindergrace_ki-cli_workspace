@@ -484,6 +484,8 @@ def check_ruff(project_path: str) -> CheckResult:
                 "check",
                 check_path,
                 "--quiet",  # Nur Fehler ausgeben
+                "--ignore",
+                "E501",  # Line too long - wird von ruff format behandelt
                 "--exclude",
                 ".venv,venv,node_modules,__pycache__,build,dist",
             ],
