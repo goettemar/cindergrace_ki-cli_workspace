@@ -141,6 +141,21 @@ class FaqEntry:
     updated_at: datetime | None = None
 
 
+@dataclass
+class AiPrompt:
+    """KI-Prompt-Template fuer Delegation an andere KIs."""
+
+    id: int | None = None
+    name: str = ""  # Eindeutiger Name (z.B. "code_review", "security_audit")
+    description: str = ""  # Kurze Beschreibung
+    prompt: str = ""  # Prompt-Template mit {variablen}
+    default_ai: str = "codex"  # Default-KI (codex, gemini, claude)
+    category: str = "general"  # Kategorie (review, security, testing, etc.)
+    is_builtin: bool = False  # True = mitgeliefert, nicht loeschbar
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class DatabaseManager:
     """SQLite Database Manager mit FTS5 Support."""
 
@@ -568,6 +583,26 @@ class DatabaseManager:
             cursor = conn.execute("SELECT COUNT(*) FROM ki_faq")
             if cursor.fetchone()[0] == 0:
                 self._init_default_faq(conn)
+
+            # AI Prompts Tabelle (fuer KI-Delegation)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ai_prompts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    prompt TEXT NOT NULL,
+                    default_ai TEXT NOT NULL DEFAULT 'codex',
+                    category TEXT NOT NULL DEFAULT 'general',
+                    is_builtin INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Default-Prompts initialisieren (falls leer)
+            cursor = conn.execute("SELECT COUNT(*) FROM ai_prompts")
+            if cursor.fetchone()[0] == 0:
+                self._init_default_prompts(conn)
 
             conn.commit()
 
@@ -1901,3 +1936,101 @@ class DatabaseManager:
                 "tags": faq.tags,
             }
         return result
+
+    # === AI PROMPTS CRUD ===
+
+    def _init_default_prompts(self, conn: sqlite3.Connection) -> None:
+        """Initialisiert die Default-Prompts fuer KI-Delegation."""
+        from core.ai_delegation import DEFAULT_PROMPTS
+
+        for prompt_data in DEFAULT_PROMPTS:
+            conn.execute(
+                """INSERT INTO ai_prompts (name, description, prompt, default_ai, category, is_builtin)
+                   VALUES (?, ?, ?, ?, ?, 1)""",
+                (
+                    prompt_data["name"],
+                    prompt_data["description"],
+                    prompt_data["prompt"],
+                    prompt_data["default_ai"],
+                    prompt_data["category"],
+                ),
+            )
+
+    def get_prompt(self, name: str) -> AiPrompt | None:
+        """Laedt einen Prompt nach Name."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT * FROM ai_prompts WHERE name = ?", (name,))
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_prompt(row)
+        return None
+
+    def get_all_prompts(self, category: str | None = None) -> list[AiPrompt]:
+        """Laedt alle Prompts, optional gefiltert nach Kategorie."""
+        with self._get_connection() as conn:
+            if category:
+                cursor = conn.execute(
+                    "SELECT * FROM ai_prompts WHERE category = ? ORDER BY name",
+                    (category,),
+                )
+            else:
+                cursor = conn.execute("SELECT * FROM ai_prompts ORDER BY category, name")
+            return [self._row_to_prompt(row) for row in cursor.fetchall()]
+
+    def upsert_prompt(self, prompt: AiPrompt) -> AiPrompt:
+        """Erstellt oder aktualisiert einen Prompt."""
+        with self._get_connection() as conn:
+            now = datetime.now().isoformat()
+
+            conn.execute(
+                """
+                INSERT INTO ai_prompts (name, description, prompt, default_ai, category, is_builtin, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    description = excluded.description,
+                    prompt = excluded.prompt,
+                    default_ai = excluded.default_ai,
+                    category = excluded.category,
+                    updated_at = excluded.updated_at
+                WHERE is_builtin = 0 OR excluded.is_builtin = 1
+                """,
+                (
+                    prompt.name,
+                    prompt.description,
+                    prompt.prompt,
+                    prompt.default_ai,
+                    prompt.category,
+                    1 if prompt.is_builtin else 0,
+                    now,
+                ),
+            )
+
+            cursor = conn.execute("SELECT id FROM ai_prompts WHERE name = ?", (prompt.name,))
+            prompt.id = cursor.fetchone()[0]
+            prompt.updated_at = datetime.fromisoformat(now)
+            conn.commit()
+        return prompt
+
+    def delete_prompt(self, name: str) -> bool:
+        """Loescht einen Prompt (nur nicht-builtin)."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM ai_prompts WHERE name = ? AND is_builtin = 0",
+                (name,),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def _row_to_prompt(self, row: sqlite3.Row) -> AiPrompt:
+        """Konvertiert eine DB-Row zu einem AiPrompt."""
+        return AiPrompt(
+            id=row["id"],
+            name=row["name"],
+            description=row["description"],
+            prompt=row["prompt"],
+            default_ai=row["default_ai"],
+            category=row["category"],
+            is_builtin=bool(row["is_builtin"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )

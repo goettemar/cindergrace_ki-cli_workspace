@@ -12,6 +12,7 @@ import sys
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from core.database import DatabaseManager
@@ -727,6 +728,275 @@ def set_key(
     setting_key, description = key_mapping[key_type.lower()]
     db.set_setting(setting_key, value, encrypt=True, description=description)
     console.print(f"✅ [bold green]{description} gespeichert (verschluesselt)[/bold green]")
+
+
+# === KI-Kollegen Befehle ===
+
+
+@app.command()
+def prompts(
+    category: str | None = typer.Option(None, "-c", "--category", help="Nach Kategorie filtern"),
+    json_output: bool = typer.Option(False, "--json", help="JSON-Ausgabe"),
+):
+    """
+    Listet alle KI-Prompt-Templates auf.
+
+    Beispiele:
+      ki-workspace prompts
+      ki-workspace prompts --category review
+      ki-workspace prompts --json
+    """
+    db = get_db()
+    all_prompts = db.get_all_prompts(category)
+
+    if json_output:
+        output = [
+            {
+                "name": p.name,
+                "description": p.description,
+                "default_ai": p.default_ai,
+                "category": p.category,
+                "is_builtin": p.is_builtin,
+            }
+            for p in all_prompts
+        ]
+        console.print_json(data=output)
+        return
+
+    if not all_prompts:
+        console.print("Keine Prompts gefunden.", style="yellow")
+        return
+
+    table = Table(title="KI-Prompt-Templates", show_header=True, header_style="bold magenta")
+    table.add_column("Name", style="cyan", width=20)
+    table.add_column("Beschreibung", width=30)
+    table.add_column("Default-KI", style="yellow", width=10)
+    table.add_column("Kategorie", style="green", width=12)
+    table.add_column("Typ", width=8)
+
+    for p in all_prompts:
+        table.add_row(
+            p.name,
+            p.description,
+            p.default_ai,
+            p.category,
+            "builtin" if p.is_builtin else "custom",
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Gesamt: {len(all_prompts)} Prompts[/dim]")
+
+
+@app.command(name="prompt-show")
+def prompt_show(
+    name: str = typer.Argument(..., help="Name des Prompts"),
+):
+    """
+    Zeigt Details eines Prompts an.
+
+    Beispiel:
+      ki-workspace prompt-show code_review
+    """
+    db = get_db()
+    prompt = db.get_prompt(name)
+
+    if not prompt:
+        console.print(f"❌ Prompt '{name}' nicht gefunden", style="red")
+        sys.exit(1)
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]{prompt.name}[/bold cyan]\n"
+            f"[dim]{prompt.description}[/dim]\n\n"
+            f"[yellow]Default-KI:[/yellow] {prompt.default_ai}\n"
+            f"[green]Kategorie:[/green] {prompt.category}\n"
+            f"[blue]Typ:[/blue] {'builtin' if prompt.is_builtin else 'custom'}\n\n"
+            f"[bold]Prompt-Template:[/bold]\n"
+            f"[white]{prompt.prompt}[/white]",
+            title="Prompt Details",
+        )
+    )
+
+
+@app.command(name="prompt-add")
+def prompt_add(
+    name: str = typer.Argument(..., help="Eindeutiger Name"),
+    prompt_text: str = typer.Option(..., "-p", "--prompt", help="Prompt-Template"),
+    description: str = typer.Option("", "-d", "--description", help="Beschreibung"),
+    default_ai: str = typer.Option("codex", "--ai", help="Default-KI (codex/gemini/claude)"),
+    category: str = typer.Option("general", "-c", "--category", help="Kategorie"),
+):
+    """
+    Erstellt einen neuen Prompt.
+
+    Variablen: {file}, {file_content}, {file_name}, {project}, {project_path},
+               {git_diff}, {git_diff_staged}, {issues}, {timestamp}
+
+    Beispiel:
+      ki-workspace prompt-add my_review -p "Reviewe {file_content}" -d "Mein Review" --ai gemini
+    """
+    from core.database import AiPrompt
+
+    db = get_db()
+
+    # Pruefen ob Name bereits existiert
+    existing = db.get_prompt(name)
+    if existing:
+        console.print(f"❌ Prompt '{name}' existiert bereits", style="red")
+        sys.exit(1)
+
+    new_prompt = AiPrompt(
+        name=name,
+        description=description,
+        prompt=prompt_text,
+        default_ai=default_ai,
+        category=category,
+        is_builtin=False,
+    )
+
+    db.upsert_prompt(new_prompt)
+    console.print(f"✅ Prompt '[bold cyan]{name}[/bold cyan]' erstellt")
+
+
+@app.command(name="prompt-delete")
+def prompt_delete(
+    name: str = typer.Argument(..., help="Name des Prompts"),
+):
+    """
+    Loescht einen benutzerdefinierten Prompt.
+
+    Builtin-Prompts koennen nicht geloescht werden.
+    """
+    db = get_db()
+    prompt = db.get_prompt(name)
+
+    if not prompt:
+        console.print(f"❌ Prompt '{name}' nicht gefunden", style="red")
+        sys.exit(1)
+
+    if prompt.is_builtin:
+        console.print(f"❌ Builtin-Prompt '{name}' kann nicht geloescht werden", style="red")
+        sys.exit(1)
+
+    if db.delete_prompt(name):
+        console.print(f"✅ Prompt '[bold cyan]{name}[/bold cyan]' geloescht")
+    else:
+        console.print("❌ Fehler beim Loeschen", style="red")
+        sys.exit(1)
+
+
+@app.command()
+def delegate(
+    prompt_name: str = typer.Argument(..., help="Name des Prompt-Templates"),
+    ai: str | None = typer.Option(None, "--ai", help="KI (codex/gemini/claude), sonst Default"),
+    file: str | None = typer.Option(None, "-f", "--file", help="Zieldatei"),
+    project: str | None = typer.Option(None, "-p", "--project", help="Projektname"),
+    timeout: int = typer.Option(300, "-t", "--timeout", help="Timeout in Sekunden"),
+    output_file: str | None = typer.Option(
+        None, "-o", "--output", help="Output in Datei speichern"
+    ),
+):
+    """
+    Delegiert einen Task an eine KI.
+
+    Beispiele:
+      ki-workspace delegate code_review -f src/module.py
+      ki-workspace delegate security_audit -p my_project --ai gemini
+      ki-workspace delegate git_commit_review -p netman -o review.md
+    """
+    from core.ai_delegation import delegate_task, list_available_ais
+
+    db = get_db()
+
+    # Prompt laden
+    prompt_obj = db.get_prompt(prompt_name)
+    if not prompt_obj:
+        console.print(f"❌ Prompt '{prompt_name}' nicht gefunden", style="red")
+        console.print("Verfuegbare Prompts: [cyan]ki-workspace prompts[/cyan]")
+        sys.exit(1)
+
+    # KI bestimmen
+    ai_id = ai or prompt_obj.default_ai
+
+    # Verfuegbarkeit pruefen
+    available_ais = list_available_ais()
+    ai_info = next((a for a in available_ais if a["id"] == ai_id), None)
+    if not ai_info or not ai_info["available"]:
+        console.print(f"❌ KI '{ai_id}' nicht verfuegbar", style="red")
+        for a in available_ais:
+            status = "✅" if a["available"] else "❌"
+            console.print(f"  {status} {a['id']}: {a['name']}")
+        sys.exit(1)
+
+    # Projekt-Pfad ermitteln
+    project_path = None
+    project_name = None
+    if project:
+        proj = db.get_project_by_name(project)
+        if proj:
+            project_path = proj.path
+            project_name = proj.name
+        else:
+            console.print(f"❌ Projekt '{project}' nicht gefunden", style="red")
+            sys.exit(1)
+
+    # File-Pfad aufloesen
+    file_path = None
+    if file:
+        from pathlib import Path
+
+        file_path = str(Path(file).resolve())
+
+    console.print(f"[dim]Delegiere an {ai_id}...[/dim]")
+
+    # Task ausfuehren
+    with console.status(f"[bold green]Warte auf {ai_id}...[/bold green]"):
+        result = delegate_task(
+            prompt_template=prompt_obj.prompt,
+            ai_id=ai_id,
+            file_path=file_path,
+            project_path=project_path,
+            project_name=project_name,
+            timeout=timeout,
+        )
+
+    # Ergebnis ausgeben
+    if result.success:
+        console.print(f"\n✅ [bold green]Erfolgreich[/bold green] ({result.duration_seconds}s)")
+
+        if output_file:
+            from pathlib import Path
+
+            Path(output_file).write_text(result.output)
+            console.print(f"[dim]Output gespeichert: {output_file}[/dim]")
+        else:
+            console.print(Panel(result.output, title=f"Antwort von {ai_id}", border_style="green"))
+    else:
+        console.print(f"\n❌ [bold red]Fehler[/bold red] ({result.duration_seconds}s)")
+        console.print(result.error or result.output, style="red")
+        sys.exit(1)
+
+
+@app.command(name="ai-status")
+def ai_status():
+    """
+    Zeigt Status der verfuegbaren KI-CLIs.
+    """
+    from core.ai_delegation import list_available_ais
+
+    ais = list_available_ais()
+
+    table = Table(title="KI-CLI Status", show_header=True, header_style="bold magenta")
+    table.add_column("ID", style="cyan", width=10)
+    table.add_column("Name", width=20)
+    table.add_column("Pfad", width=40)
+    table.add_column("Status", width=10)
+
+    for ai in ais:
+        status = "[green]✅ OK[/green]" if ai["available"] else "[red]❌ Fehlt[/red]"
+        table.add_row(ai["id"], ai["name"], ai["path"], status)
+
+    console.print(table)
 
 
 if __name__ == "__main__":

@@ -1356,6 +1356,246 @@ class KIWorkspaceApp:
                         outputs=[workflow_log],
                     )
 
+                # === KI-Kollegen Tab ===
+                with gr.Tab("🤖 KI-Kollegen"):
+                    gr.Markdown("### KI-Delegation")
+                    gr.Markdown("Delegiere Tasks an Codex, Gemini oder Claude.")
+
+                    # KI-Status anzeigen
+                    with gr.Accordion("📡 KI-Status", open=False):
+                        ai_status_md = gr.Markdown()
+                        ai_refresh_btn = gr.Button("🔄 Status aktualisieren", size="sm")
+
+                    # Prompt auswählen und ausführen
+                    with gr.Accordion("🎯 Task delegieren", open=True):
+                        with gr.Row():
+                            prompt_dropdown = gr.Dropdown(
+                                label="Prompt-Template",
+                                choices=[],
+                                interactive=True,
+                                scale=2,
+                            )
+                            ai_dropdown = gr.Dropdown(
+                                label="KI",
+                                choices=["codex", "gemini", "claude"],
+                                value="codex",
+                                interactive=True,
+                                scale=1,
+                            )
+                        with gr.Row():
+                            target_file = gr.Textbox(
+                                label="Zieldatei (optional)",
+                                placeholder="z.B. src/module.py",
+                                scale=2,
+                            )
+                            timeout_slider = gr.Slider(
+                                label="Timeout (Sekunden)",
+                                minimum=60,
+                                maximum=600,
+                                value=300,
+                                step=30,
+                                scale=1,
+                            )
+                        delegate_btn = gr.Button("🚀 Delegieren", variant="primary")
+                        delegate_status = gr.Markdown(
+                            "_Wähle einen Prompt und starte die Delegation._"
+                        )
+                        delegate_result = gr.Code(
+                            label="Ergebnis",
+                            language="markdown",
+                            lines=15,
+                            visible=False,
+                        )
+
+                    # Prompt-Details anzeigen
+                    with gr.Accordion("📝 Prompt-Details", open=False):
+                        prompt_details = gr.Markdown("_Wähle einen Prompt aus._")
+
+                    # Eigene Prompts erstellen
+                    with gr.Accordion("➕ Eigenen Prompt erstellen", open=False):
+                        new_prompt_name = gr.Textbox(label="Name", placeholder="mein_prompt")
+                        new_prompt_desc = gr.Textbox(label="Beschreibung")
+                        new_prompt_text = gr.Textbox(
+                            label="Prompt-Template",
+                            placeholder="Analysiere {file_content}...",
+                            lines=5,
+                        )
+                        with gr.Row():
+                            new_prompt_ai = gr.Dropdown(
+                                label="Default-KI",
+                                choices=["codex", "gemini", "claude"],
+                                value="codex",
+                            )
+                            new_prompt_cat = gr.Dropdown(
+                                label="Kategorie",
+                                choices=[
+                                    "review",
+                                    "security",
+                                    "testing",
+                                    "documentation",
+                                    "refactoring",
+                                    "analysis",
+                                    "general",
+                                ],
+                                value="general",
+                            )
+                        add_prompt_btn = gr.Button("➕ Prompt erstellen", variant="secondary")
+                        add_prompt_status = gr.Markdown()
+
+                    # Event Handlers für KI-Kollegen
+
+                    def get_ai_status() -> str:
+                        from core.ai_delegation import list_available_ais
+
+                        ais = list_available_ais()
+                        lines = ["| KI | Status | Pfad |", "|---|---|---|"]
+                        for ai in ais:
+                            status = "✅" if ai["available"] else "❌"
+                            lines.append(f"| {ai['name']} | {status} | `{ai['path']}` |")
+                        return "\n".join(lines)
+
+                    def get_prompt_choices() -> list[tuple[str, str]]:
+                        prompts = self.db.get_all_prompts()
+                        return [(f"{p.name} ({p.category})", p.name) for p in prompts]
+
+                    def update_prompt_details(prompt_name: str) -> str:
+                        if not prompt_name:
+                            return "_Wähle einen Prompt aus._"
+                        prompt = self.db.get_prompt(prompt_name)
+                        if not prompt:
+                            return "_Prompt nicht gefunden._"
+                        return f"""**{prompt.name}** ({prompt.category})
+
+{prompt.description}
+
+**Default-KI:** {prompt.default_ai}
+**Typ:** {'Builtin' if prompt.is_builtin else 'Benutzerdefiniert'}
+
+**Template:**
+```
+{prompt.prompt}
+```
+
+**Verfügbare Variablen:** `{{file}}`, `{{file_content}}`, `{{file_name}}`, `{{project}}`, `{{project_path}}`, `{{git_diff}}`, `{{issues}}`, `{{timestamp}}`
+"""
+
+                    def do_delegate(
+                        project_id: int | None,
+                        prompt_name: str,
+                        ai_id: str,
+                        file_path: str,
+                        timeout: int,
+                    ) -> tuple[str, str, dict]:
+                        if not prompt_name:
+                            return "❌ Kein Prompt ausgewählt", "", gr.update(visible=False)
+
+                        prompt = self.db.get_prompt(prompt_name)
+                        if not prompt:
+                            return "❌ Prompt nicht gefunden", "", gr.update(visible=False)
+
+                        # Projekt-Info
+                        project_path_str = None
+                        project_name = None
+                        if project_id:
+                            project = self.db.get_project_by_id(project_id)
+                            if project:
+                                project_path_str = project.path
+                                project_name = project.name
+
+                        # File-Pfad aufloesen
+                        file_path_resolved = None
+                        if file_path and file_path.strip():
+                            import os
+
+                            if project_path_str and not os.path.isabs(file_path):
+                                file_path_resolved = os.path.join(project_path_str, file_path)
+                            else:
+                                file_path_resolved = os.path.expanduser(file_path)
+
+                        from core.ai_delegation import delegate_task
+
+                        result = delegate_task(
+                            prompt_template=prompt.prompt,
+                            ai_id=ai_id or prompt.default_ai,
+                            file_path=file_path_resolved,
+                            project_path=project_path_str,
+                            project_name=project_name,
+                            timeout=timeout,
+                        )
+
+                        if result.success:
+                            return (
+                                f"✅ Erfolgreich ({result.duration_seconds}s) via {result.ai_used}",
+                                result.output,
+                                gr.update(visible=True),
+                            )
+                        return (
+                            f"❌ Fehler ({result.duration_seconds}s): {result.error}",
+                            result.output or "",
+                            gr.update(visible=True),
+                        )
+
+                    def do_add_prompt(
+                        name: str, desc: str, text: str, ai: str, cat: str
+                    ) -> tuple[str, dict]:
+                        if not name or not text:
+                            return "❌ Name und Prompt-Text sind erforderlich", gr.update()
+
+                        from core.database import AiPrompt
+
+                        existing = self.db.get_prompt(name)
+                        if existing:
+                            return f"❌ Prompt '{name}' existiert bereits", gr.update()
+
+                        new_prompt = AiPrompt(
+                            name=name,
+                            description=desc,
+                            prompt=text,
+                            default_ai=ai,
+                            category=cat,
+                            is_builtin=False,
+                        )
+                        self.db.upsert_prompt(new_prompt)
+                        return f"✅ Prompt '{name}' erstellt", gr.update(
+                            choices=get_prompt_choices()
+                        )
+
+                    # Initiale Werte setzen
+                    ai_status_md.value = get_ai_status()
+                    prompt_dropdown.choices = get_prompt_choices()
+
+                    ai_refresh_btn.click(fn=get_ai_status, outputs=[ai_status_md])
+
+                    prompt_dropdown.change(
+                        fn=update_prompt_details,
+                        inputs=[prompt_dropdown],
+                        outputs=[prompt_details],
+                    )
+
+                    delegate_btn.click(
+                        fn=do_delegate,
+                        inputs=[
+                            project_dropdown,
+                            prompt_dropdown,
+                            ai_dropdown,
+                            target_file,
+                            timeout_slider,
+                        ],
+                        outputs=[delegate_status, delegate_result, delegate_result],
+                    )
+
+                    add_prompt_btn.click(
+                        fn=do_add_prompt,
+                        inputs=[
+                            new_prompt_name,
+                            new_prompt_desc,
+                            new_prompt_text,
+                            new_prompt_ai,
+                            new_prompt_cat,
+                        ],
+                        outputs=[add_prompt_status, prompt_dropdown],
+                    )
+
             # === Event Handlers ===
 
             def update_issues(*args):
