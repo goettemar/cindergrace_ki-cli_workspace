@@ -35,3 +35,8 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# AI Tooling (internal development files)
+CLAUDE.md
+AGENTS.md
+.ki-faq.json
