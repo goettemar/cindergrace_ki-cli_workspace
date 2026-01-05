@@ -414,35 +414,38 @@ class KIWorkspaceApp:
                                     "📦 Archiv", size="sm", variant="stop", min_width=80
                                 )
 
-                        # Tabellarisches Layout: Label | Status | (Reserve)
+                        # Zwei-Spalten Layout
                         with gr.Row():
-                            gr.Markdown("**📁 Pfad**")
-                            dash_info_path = gr.Markdown("*-*")
-                            gr.Markdown("")
-                        with gr.Row():
-                            gr.Markdown("**🔗 GitHub**")
-                            dash_info_github = gr.Markdown("*-*")
-                            gr.Markdown("")
-                        with gr.Row():
-                            gr.Markdown("**📊 Codacy**")
-                            dash_info_codacy = gr.Markdown("*-*")
-                            gr.Markdown("")
-                        with gr.Row():
-                            gr.Markdown("**✓ Release Check**")
-                            dash_release_info = gr.Markdown("*-*")
-                            gr.Markdown("")  # Spalte 3 Reserve
-                        with gr.Row():
-                            gr.Markdown("**🔴 Critical Issues**")
-                            dash_critical_list = gr.Markdown("*Keine*")
-                            gr.Markdown("")  # Spalte 3 Reserve
-                        with gr.Row():
-                            gr.Markdown("**🟠 High Issues**")
-                            dash_high_list = gr.Markdown("*Keine*")
-                            gr.Markdown("")  # Spalte 3 Reserve
-                        with gr.Row():
-                            gr.Markdown("**📊 Coverage**")
-                            dash_coverage = gr.Markdown("*-*")
-                            gr.Markdown("")  # Spalte 3 Reserve
+                            # Linke Spalte: Projekt-Infos
+                            with gr.Column(scale=1):
+                                with gr.Row():
+                                    gr.Markdown("**📁 Pfad**", scale=1)
+                                    dash_info_path = gr.Markdown("*-*", scale=2)
+                                with gr.Row():
+                                    gr.Markdown("**🔗 GitHub**", scale=1)
+                                    dash_info_github = gr.Markdown("*-*", scale=2)
+                                with gr.Row():
+                                    gr.Markdown("**📊 Codacy**", scale=1)
+                                    dash_info_codacy = gr.Markdown("*-*", scale=2)
+                                with gr.Row():
+                                    gr.Markdown("**✓ Release**", scale=1)
+                                    dash_release_info = gr.Markdown("*-*", scale=2)
+                                with gr.Row():
+                                    gr.Markdown("**🔴 Critical**", scale=1)
+                                    dash_critical_count = gr.Markdown("0", scale=2)
+                                with gr.Row():
+                                    gr.Markdown("**🟠 High**", scale=1)
+                                    dash_high_count = gr.Markdown("0", scale=2)
+                                with gr.Row():
+                                    gr.Markdown("**📊 Coverage**", scale=1)
+                                    dash_coverage = gr.Markdown("*-*", scale=2)
+
+                            # Rechte Spalte: GitHub About + Topics
+                            with gr.Column(scale=1):
+                                gr.Markdown("**📝 About**")
+                                dash_github_about = gr.Markdown("*-*")
+                                gr.Markdown("**🏷️ Topics**")
+                                dash_github_topics = gr.Markdown("*-*")
 
                         dash_detail_msg = gr.Markdown("")
 
@@ -2276,8 +2279,10 @@ class KIWorkspaceApp:
                         "*-*",
                         "*-*",
                         "*-*",
-                        "*Keine*",
-                        "*Keine*",
+                        "*-*",
+                        "0",
+                        "0",
+                        "*-*",
                         "*-*",
                         "*-*",
                         "",
@@ -2291,8 +2296,10 @@ class KIWorkspaceApp:
                         "*-*",
                         "*-*",
                         "*-*",
-                        "*Keine*",
-                        "*Keine*",
+                        "*-*",
+                        "0",
+                        "0",
+                        "*-*",
                         "*-*",
                         "*-*",
                         "",
@@ -2318,43 +2325,26 @@ class KIWorkspaceApp:
                 )
                 codacy_info = f"`{project.codacy_provider or '-'}/{project.codacy_org or '-'}`"
 
-                # Critical Issues laden (max 5, kompakt)
-                critical_issues = self.db.get_issues(
-                    project_id=project_id,
-                    priority="Critical",
-                    status="open",
-                    is_false_positive=False,
+                # Critical/High Issues: Nur Anzahl
+                critical_count = len(
+                    self.db.get_issues(
+                        project_id=project_id,
+                        priority="Critical",
+                        status="open",
+                        is_false_positive=False,
+                    )
                 )
-                if critical_issues:
-                    lines = []
-                    for i in critical_issues[:5]:
-                        title = i.title[:40] + "…" if len(i.title) > 40 else i.title
-                        file_name = i.file_path.split("/")[-1][:20] if i.file_path else "-"
-                        lines.append(f"• {title} (`{file_name}:{i.line_number or '-'}`)")
-                    critical_list = "\n".join(lines)
-                    if len(critical_issues) > 5:
-                        critical_list += f"\n\n*+{len(critical_issues) - 5} weitere*"
-                else:
-                    critical_list = "✅ Keine"
+                critical_str = "✅ 0" if critical_count == 0 else f"🔴 **{critical_count}**"
 
-                # High Issues laden (max 5, kompakt)
-                high_issues = self.db.get_issues(
-                    project_id=project_id,
-                    priority="High",
-                    status="open",
-                    is_false_positive=False,
+                high_count = len(
+                    self.db.get_issues(
+                        project_id=project_id,
+                        priority="High",
+                        status="open",
+                        is_false_positive=False,
+                    )
                 )
-                if high_issues:
-                    lines = []
-                    for i in high_issues[:5]:
-                        title = i.title[:40] + "…" if len(i.title) > 40 else i.title
-                        file_name = i.file_path.split("/")[-1][:20] if i.file_path else "-"
-                        lines.append(f"• {title} (`{file_name}:{i.line_number or '-'}`)")
-                    high_list = "\n".join(lines)
-                    if len(high_issues) > 5:
-                        high_list += f"\n\n*+{len(high_issues) - 5} weitere*"
-                else:
-                    high_list = "✅ Keine"
+                high_str = "✅ 0" if high_count == 0 else f"🟠 **{high_count}**"
 
                 # Release Check Info (nur Zähler)
                 if project.cache_release_total > 0:
@@ -2368,16 +2358,50 @@ class KIWorkspaceApp:
                 # Coverage: Nur beim Release-Check (kein pytest bei jedem Klick)
                 coverage_info = "*Release-Check ausführen*"
 
+                # GitHub About + Topics
+                github_about = "*-*"
+                github_topics = "*-*"
+                if project.github_owner and project.name:
+                    try:
+                        import json
+                        import subprocess
+
+                        result = subprocess.run(
+                            [
+                                "gh",
+                                "repo",
+                                "view",
+                                f"{project.github_owner}/{project.name}",
+                                "--json",
+                                "description,repositoryTopics",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+                        if result.returncode == 0:
+                            data = json.loads(result.stdout)
+                            if data.get("description"):
+                                github_about = data["description"]
+                            topics = data.get("repositoryTopics", [])
+                            if topics:
+                                topic_names = [t["name"] for t in topics]
+                                github_topics = " ".join(f"`{t}`" for t in topic_names)
+                    except Exception:
+                        pass
+
                 return (
                     gr.update(visible=True),
                     f"### 📁 {project.name} ({phase_name})",
                     path_info,
                     github_info,
                     codacy_info,
-                    critical_list,
-                    high_list,
                     release_info,
+                    critical_str,
+                    high_str,
                     coverage_info,
+                    github_about,
+                    github_topics,
                     "",
                 )
 
@@ -2402,8 +2426,10 @@ class KIWorkspaceApp:
                     "*-*",
                     "*-*",
                     "*-*",
-                    "*Keine*",
-                    "*Keine*",
+                    "*-*",
+                    "0",
+                    "0",
+                    "*-*",
                     "*-*",
                     "*-*",
                     "",
@@ -2472,10 +2498,12 @@ class KIWorkspaceApp:
                     dash_info_path,
                     dash_info_github,
                     dash_info_codacy,
-                    dash_critical_list,
-                    dash_high_list,
                     dash_release_info,
+                    dash_critical_count,
+                    dash_high_count,
                     dash_coverage,
+                    dash_github_about,
+                    dash_github_topics,
                     dash_detail_msg,
                 ],
             )
@@ -2488,7 +2516,7 @@ class KIWorkspaceApp:
             ).then(
                 fn=lambda pid: load_project_details(pid)[5:8] if pid else ("", "", ""),
                 inputs=[dash_selected_id],
-                outputs=[dash_critical_list, dash_high_list, dash_release_info],
+                outputs=[dash_release_info, dash_critical_count, dash_high_count],
             ).then(
                 fn=load_dashboard_data,
                 outputs=[dashboard_table],
