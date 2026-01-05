@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1084,23 +1085,47 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
             "Gradio Share": "error",
         }
 
-    # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)
+    # Alle Checks sammeln die ausgefuehrt werden sollen
+    checks_to_run: dict[str, callable] = {}
+
+    # Datei-basierte Checks (nur wenn Pfad existiert)
     if project.path:
         for check_name, check_func in file_checks.items():
             if check_name in enabled_checks:
-                result = check_func()
+                checks_to_run[check_name] = check_func
+
+    # DB-basierte Checks
+    for check_name, check_func in db_checks.items():
+        if check_name in enabled_checks:
+            checks_to_run[check_name] = check_func
+
+    # Checks parallel ausfuehren
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        # Starte alle Checks parallel
+        future_to_name = {
+            executor.submit(check_func): check_name
+            for check_name, check_func in checks_to_run.items()
+        }
+
+        # Sammle Ergebnisse
+        for future in as_completed(future_to_name):
+            check_name = future_to_name[future]
+            try:
+                result = future.result()
                 # Severity aus Matrix ueberschreiben (ausser bei info/uebersprungen)
                 if result.severity != "info":
                     result.severity = enabled_checks[check_name]
                 results.append(result)
-
-    # DB-basierte Checks ausfuehren
-    for check_name, check_func in db_checks.items():
-        if check_name in enabled_checks:
-            result = check_func()
-            if result.severity != "info":
-                result.severity = enabled_checks[check_name]
-            results.append(result)
+            except Exception as e:
+                # Bei Fehler: Check als fehlgeschlagen markieren
+                results.append(
+                    CheckResult(
+                        name=check_name,
+                        passed=False,
+                        message=f"Fehler: {e}",
+                        severity=enabled_checks.get(check_name, "warning"),
+                    )
+                )
 
     return results
 
@@ -1164,23 +1189,43 @@ def run_phase_checks(
         "Gitignore Patterns": lambda: check_gitignore_patterns(project.path, gitignore_patterns),
     }
 
-    # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)
+    # Alle Checks sammeln die ausgefuehrt werden sollen
+    checks_to_run: dict[str, callable] = {}
+
+    # Datei-basierte Checks (nur wenn Pfad existiert)
     if project.path:
         for check_name, check_func in file_checks.items():
             if check_name in enabled_checks:
-                result = check_func()
-                # Severity aus Matrix ueberschreiben (ausser bei info/uebersprungen)
+                checks_to_run[check_name] = check_func
+
+    # DB-basierte Checks
+    for check_name, check_func in db_checks.items():
+        if check_name in enabled_checks:
+            checks_to_run[check_name] = check_func
+
+    # Checks parallel ausfuehren
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        future_to_name = {
+            executor.submit(check_func): check_name
+            for check_name, check_func in checks_to_run.items()
+        }
+
+        for future in as_completed(future_to_name):
+            check_name = future_to_name[future]
+            try:
+                result = future.result()
                 if result.severity != "info":
                     result.severity = enabled_checks[check_name]
                 results.append(result)
-
-    # DB-basierte Checks ausfuehren
-    for check_name, check_func in db_checks.items():
-        if check_name in enabled_checks:
-            result = check_func()
-            if result.severity != "info":
-                result.severity = enabled_checks[check_name]
-            results.append(result)
+            except Exception as e:
+                results.append(
+                    CheckResult(
+                        name=check_name,
+                        passed=False,
+                        message=f"Fehler: {e}",
+                        severity=enabled_checks.get(check_name, "warning"),
+                    )
+                )
 
     return results
 
