@@ -1960,8 +1960,14 @@ class KIWorkspaceApp:
                 except Exception:
                     return "-"
 
-            def load_dashboard_data():
-                """Lädt alle Projekte mit gecachten Stats für das Dashboard."""
+            def load_dashboard_data(with_live_status: bool = False):
+                """
+                Lädt alle Projekte für das Dashboard.
+
+                Args:
+                    with_live_status: True = CI/Git Status live holen (langsam),
+                                     False = nur "-" anzeigen (schnell)
+                """
                 projects = self.db.get_all_projects(include_archived=False)
                 phases = {p.id: p.display_name for p in self.db.get_all_phases()}
 
@@ -1970,12 +1976,14 @@ class KIWorkspaceApp:
                     # Phase-Name
                     phase_name = phases.get(p.phase_id, "-") if p.phase_id else "-"
 
-                    # CI Status (letzte GitHub Action)
-                    owner = p.github_owner or p.codacy_org
-                    ci_status = get_last_ci_status(owner, p.name) if owner else "-"
-
-                    # Git Status (uncommitted/unpushed)
-                    git_status = get_git_status_short(p.path) if p.path else "-"
+                    # CI/Git Status: nur bei explizitem Refresh holen
+                    if with_live_status:
+                        owner = p.github_owner or p.codacy_org
+                        ci_status = get_last_ci_status(owner, p.name) if owner else "-"
+                        git_status = get_git_status_short(p.path) if p.path else "-"
+                    else:
+                        ci_status = "-"
+                        git_status = "-"
 
                     # Release Status
                     if p.cache_release_total > 0:
@@ -2010,38 +2018,58 @@ class KIWorkspaceApp:
                 return rows
 
             def refresh_all_projects():
-                """Aktualisiert den Cache für alle Projekte (parallel)."""
+                """Aktualisiert alle Projekte: Codacy-Sync + Release-Checks (parallel)."""
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
                 from core.checks import run_all_checks
 
                 projects = self.db.get_all_projects(include_archived=False)
+                sync_results = {"synced": 0, "checked": 0, "errors": []}
 
                 def refresh_single_project(project):
-                    """Aktualisiert ein einzelnes Projekt."""
-                    # Issues-Cache aktualisieren
-                    self.db.update_project_cache(project.id)
+                    """Sync + Check für ein einzelnes Projekt."""
+                    result = {"name": project.name, "synced": False, "checked": False}
 
-                    # Release-Check ausführen und cachen
+                    # 1. Codacy-Sync (wenn konfiguriert)
+                    if project.codacy_provider and project.codacy_org and self.codacy.api_token:
+                        try:
+                            stats = self.codacy.sync_project(self.db, project)
+                            if "error" not in stats:
+                                result["synced"] = True
+                        except Exception as e:
+                            logger.warning(f"Sync-Fehler {project.name}: {e}")
+
+                    # 2. Release-Check (wenn lokaler Pfad)
                     if project.path:
-                        results = run_all_checks(self.db, project)
-                        passed = sum(1 for r in results if r.passed)
-                        total = len(results)
-                        self.db.update_release_cache(project.id, passed, total, passed == total)
-                    return project.name
+                        try:
+                            results = run_all_checks(self.db, project)
+                            passed = sum(1 for r in results if r.passed)
+                            total = len(results)
+                            self.db.update_release_cache(project.id, passed, total, passed == total)
+                            result["checked"] = True
+                        except Exception as e:
+                            logger.warning(f"Check-Fehler {project.name}: {e}")
+
+                    return result
 
                 # Alle Projekte parallel aktualisieren
-                updated = 0
                 with ThreadPoolExecutor(max_workers=len(projects) or 1) as executor:
                     futures = {executor.submit(refresh_single_project, p): p for p in projects}
                     for future in as_completed(futures):
                         try:
-                            future.result()
-                            updated += 1
-                        except Exception:
-                            pass  # Fehler ignorieren, andere Projekte weitermachen
+                            res = future.result()
+                            if res["synced"]:
+                                sync_results["synced"] += 1
+                            if res["checked"]:
+                                sync_results["checked"] += 1
+                        except Exception as e:
+                            sync_results["errors"].append(str(e))
 
-                return load_dashboard_data(), f"✅ {updated} Projekte aktualisiert"
+                msg = f"✅ {sync_results['synced']} synced, {sync_results['checked']} checked"
+                if sync_results["errors"]:
+                    msg += f" ({len(sync_results['errors'])} Fehler)"
+                # Mit live CI/Git Status laden
+                return load_dashboard_data(with_live_status=True), msg
 
             # Dashboard beim App-Start laden
             app.load(fn=load_dashboard_data, outputs=[dashboard_table])
@@ -2281,28 +2309,8 @@ class KIWorkspaceApp:
                 else:
                     release_info = "❓ *Nicht geprüft*"
 
-                # Coverage aus Cache lesen (schnell, kein pytest)
-                coverage_info = "*-*"
-                if project.path:
-                    from core.checks import check_coverage
-
-                    cov_result = check_coverage(project.path)
-                    if "%" in cov_result.message:
-                        import re
-
-                        match = re.search(r"(\d+)%", cov_result.message)
-                        if match:
-                            pct = int(match.group(1))
-                            if pct >= 80:
-                                coverage_info = f"🟢 **{pct}%**"
-                            elif pct >= 60:
-                                coverage_info = f"🟡 **{pct}%**"
-                            else:
-                                coverage_info = f"🔴 **{pct}%**"
-                    elif "Nicht gecacht" in cov_result.message:
-                        coverage_info = "❓ *Nicht gecacht*"
-                    elif "Nicht verfuegbar" in cov_result.message:
-                        coverage_info = "*-*"
+                # Coverage: Nur beim Release-Check (kein pytest bei jedem Klick)
+                coverage_info = "*Release-Check ausführen*"
 
                 return (
                     gr.update(visible=True),
