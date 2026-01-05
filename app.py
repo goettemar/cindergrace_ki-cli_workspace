@@ -612,12 +612,15 @@ class KIWorkspaceApp:
 
                         # Mitte: Push & Sync + Git Status + Änderungen
                         with gr.Column(scale=1):
-                            commit_msg_input = gr.Textbox(
-                                label="Commit Message",
-                                placeholder="Änderungen beschreiben...",
-                                lines=1,
-                                max_lines=2,
-                            )
+                            with gr.Row():
+                                commit_msg_input = gr.Textbox(
+                                    label="Commit Message",
+                                    placeholder="Änderungen beschreiben...",
+                                    lines=1,
+                                    max_lines=2,
+                                    scale=5,
+                                )
+                                ai_commit_btn = gr.Button("🤖 AI", variant="secondary", scale=1)
                             with gr.Row():
                                 push_sync_btn = gr.Button("🚀 Push & Sync", variant="secondary")
                                 push_sync_output = gr.Markdown("")
@@ -2581,6 +2584,47 @@ class KIWorkspaceApp:
                     actions_debug,
                 )
 
+            def generate_ai_commit_message(project_id: int | None):
+                """Generiert AI Commit Message für staged Changes."""
+                if not project_id:
+                    return "❌ Kein Projekt ausgewählt"
+
+                project = self.db.get_project(project_id)
+                if not project or not project.path:
+                    return "❌ Kein lokaler Pfad"
+
+                # API Key prüfen
+                api_key = self.db.get_setting("openrouter_api_key", decrypt=True)
+                if not api_key:
+                    return "❌ OpenRouter Key nicht konfiguriert (Einstellungen > API Keys)"
+
+                model = self.db.get_setting("openrouter_model") or "x-ai/grok-3-mini-beta"
+
+                # AI Commit Message generieren
+                from core.ai_commit import generate_commit_message, get_staged_diff
+
+                success, diff = get_staged_diff(project.path)
+                if not success:
+                    # Falls keine staged changes, alle uncommitted nehmen
+                    import subprocess
+
+                    result = subprocess.run(
+                        ["git", "diff", "--no-color"],
+                        cwd=project.path,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    diff = result.stdout.strip()
+                    if not diff:
+                        return "❌ Keine Änderungen gefunden"
+
+                success, message = generate_commit_message(api_key, diff, model)
+                if not success:
+                    return f"❌ {message}"
+
+                return message
+
             # Event Bindings für GitHub Tab
             refresh_github_all_btn.click(
                 fn=refresh_all_github_data,
@@ -2605,6 +2649,13 @@ class KIWorkspaceApp:
                 outputs=git_changes_box,
             ).then(
                 fn=lambda: "",  # Clear commit message after push
+                outputs=commit_msg_input,
+            )
+
+            # AI Commit Message generieren
+            ai_commit_btn.click(
+                fn=generate_ai_commit_message,
+                inputs=[project_dropdown],
                 outputs=commit_msg_input,
             )
 
