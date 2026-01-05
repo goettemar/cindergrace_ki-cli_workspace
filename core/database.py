@@ -443,6 +443,29 @@ class DatabaseManager:
                             (phase_id, 1 if enabled else 0, severity),
                         )
 
+            # Migration: README Status zu check_matrix hinzufügen falls nicht vorhanden
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM check_matrix WHERE check_name = 'README Status'"
+            )
+            if cursor.fetchone()[0] == 0:
+                cursor = conn.execute("SELECT id, name FROM project_phases")
+                phase_ids = {row["name"]: row["id"] for row in cursor.fetchall()}
+                status_configs = [
+                    ("development", True, "warning"),
+                    ("refactoring", True, "warning"),
+                    ("testing", True, "warning"),
+                    ("final", True, "error"),
+                ]
+                for phase_name, enabled, severity in status_configs:
+                    phase_id = phase_ids.get(phase_name)
+                    if phase_id:
+                        conn.execute(
+                            """INSERT INTO check_matrix
+                               (phase_id, check_name, enabled, severity, description)
+                               VALUES (?, 'README Status', ?, ?, 'README-Status synchron mit Phase')""",
+                            (phase_id, 1 if enabled else 0, severity),
+                        )
+
             # KI-FAQ Tabelle
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ki_faq (
@@ -617,6 +640,16 @@ class DatabaseManager:
                     ("final", True, "error"),
                 ],
             ),
+            (
+                "README Status",
+                "README-Status synchron mit Phase",
+                [
+                    ("development", True, "warning"),
+                    ("refactoring", True, "warning"),
+                    ("testing", True, "warning"),
+                    ("final", True, "error"),
+                ],
+            ),
         ]
 
         for check_name, check_desc, phase_configs in checks:
@@ -640,9 +673,14 @@ class DatabaseManager:
         default_projects_path = os.path.join(home, "projekte")
         default_archive_path = os.path.join(home, "projekte", "archiv")
 
+        default_backup_path = os.path.join(home, "projekte_backup")
+        default_test_path = os.path.join(home, "projekte_test")
+
         settings = [
             ("project_base_path", default_projects_path, "Basis-Pfad für neue Projekte"),
             ("project_archive_path", default_archive_path, "Pfad für archivierte Projekte"),
+            ("backup_base_path", default_backup_path, "Basis-Pfad für Projekt-Backups"),
+            ("test_clone_base_path", default_test_path, "Basis-Pfad für Test-Clones"),
             ("github_org", "goettemar", "GitHub Organisation/Username"),
             ("github_provider", "gh", "Git Provider (gh=GitHub, gl=GitLab, bb=BitBucket)"),
             ("default_license", "polyform-nc", "Standard-Lizenz für neue Projekte"),
@@ -1428,6 +1466,48 @@ class DatabaseManager:
         with self._get_connection() as conn:
             conn.execute("UPDATE projects SET is_archived = 0 WHERE id = ?", (project_id,))
             conn.commit()
+
+    def set_project_phase(
+        self, project_id: int, phase_id: int, update_readme: bool = True
+    ) -> tuple[bool, str]:
+        """
+        Setzt die Phase eines Projekts und aktualisiert optional die README.
+
+        Args:
+            project_id: Projekt-ID
+            phase_id: Neue Phase-ID
+            update_readme: Wenn True, wird der README-Status automatisch aktualisiert
+
+        Returns:
+            (success, message)
+        """
+        # Phase holen
+        phase = self.get_phase(phase_id)
+        if not phase:
+            return False, f"Phase {phase_id} nicht gefunden"
+
+        # Projekt holen
+        project = self.get_project(project_id)
+        if not project:
+            return False, f"Projekt {project_id} nicht gefunden"
+
+        # Phase in DB setzen
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE projects SET phase_id = ? WHERE id = ?",
+                (phase_id, project_id),
+            )
+            conn.commit()
+
+        # README aktualisieren wenn gewünscht und Pfad vorhanden
+        readme_msg = ""
+        if update_readme and project.path:
+            from core.project_tools import update_readme_status
+
+            success, readme_msg = update_readme_status(project.path, phase.display_name)
+            readme_msg = f" (README: {readme_msg})" if not success else " + README aktualisiert"
+
+        return True, f"Phase auf '{phase.display_name}' gesetzt{readme_msg}"
 
     def delete_project(self, project_id: int) -> None:
         """Löscht ein Projekt und alle zugehörigen Issues (permanent)."""

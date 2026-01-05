@@ -754,6 +754,73 @@ def check_code_english(project_path: str) -> CheckResult:
     )
 
 
+def check_readme_status(project_path: str, expected_phase: str) -> CheckResult:
+    """
+    Prueft ob README-Status mit Workspace-Phase uebereinstimmt.
+
+    Sucht nach Pattern: **Status:** <phase>
+    Vergleicht mit expected_phase.
+
+    Args:
+        project_path: Pfad zum Projekt
+        expected_phase: Erwarteter Phase-Name (z.B. "Development", "Final")
+
+    Returns:
+        CheckResult mit Sync-Status
+    """
+    path = Path(project_path)
+    readme_files = ["README.md", "README.txt", "README", "README.rst"]
+    status_pattern = re.compile(r"\*\*Status:\*\*\s*(\w+)", re.IGNORECASE)
+
+    for rf in readme_files:
+        readme_path = path / rf
+        if readme_path.exists():
+            try:
+                content = readme_path.read_text(encoding="utf-8", errors="ignore")
+                match = status_pattern.search(content)
+
+                if not match:
+                    return CheckResult(
+                        name="README Status",
+                        passed=False,
+                        message=f"Keine Status-Zeile gefunden (erwartet: {expected_phase})",
+                        severity="warning",
+                    )
+
+                found_status = match.group(1)
+
+                # Vergleich (case-insensitive)
+                if found_status.lower() == expected_phase.lower():
+                    return CheckResult(
+                        name="README Status",
+                        passed=True,
+                        message=f"Status synchron: {found_status}",
+                        severity="warning",
+                    )
+                else:
+                    return CheckResult(
+                        name="README Status",
+                        passed=False,
+                        message=f"Status '{found_status}' != Phase '{expected_phase}'",
+                        severity="warning",
+                    )
+
+            except Exception as e:
+                return CheckResult(
+                    name="README Status",
+                    passed=True,
+                    message=f"README nicht lesbar: {e}",
+                    severity="info",
+                )
+
+    return CheckResult(
+        name="README Status",
+        passed=True,
+        message="Keine README gefunden (uebersprungen)",
+        severity="info",
+    )
+
+
 def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
     """
     Fuehrt Release Readiness Checks basierend auf der Projekt-Phase aus.
@@ -788,10 +855,18 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
         "pyproject.toml English": lambda: check_pyproject_english(project.path),
     }
 
-    # DB-basierte Checks
+    # Phase-Info fuer README Status Check
+    phase_display = "Development"  # Default
+    if project.phase_id:
+        phase = db.get_phase(project.phase_id)
+        if phase:
+            phase_display = phase.display_name
+
+    # DB-basierte Checks (benoetigen DB-Zugriff)
     db_checks = {
         "Critical Issues": lambda: check_critical_issues(db, project.id),
         "High Issues": lambda: check_high_issues(db, project.id),
+        "README Status": lambda: check_readme_status(project.path, phase_display),
     }
 
     # Aktivierte Checks aus der Matrix laden
@@ -813,6 +888,7 @@ def run_all_checks(db: DatabaseManager, project: Project) -> list[CheckResult]:
             "Critical Issues": "error",
             "High Issues": "warning",
             "README English": "warning",
+            "README Status": "warning",
             "Hobby Notice": "warning",
             "i18n Support": "warning",
             "Code English": "warning",
@@ -874,10 +950,18 @@ def run_phase_checks(
         "pyproject.toml English": lambda: check_pyproject_english(project.path),
     }
 
-    # DB-basierte Checks
+    # Phase-Info fuer README Status Check
+    phase_display = "Development"  # Default
+    if project.phase_id:
+        phase = db.get_phase(project.phase_id)
+        if phase:
+            phase_display = phase.display_name
+
+    # DB-basierte Checks (benoetigen DB-Zugriff)
     db_checks = {
         "Critical Issues": lambda: check_critical_issues(db, project.id),
         "High Issues": lambda: check_high_issues(db, project.id),
+        "README Status": lambda: check_readme_status(project.path, phase_display),
     }
 
     # Datei-basierte Checks ausfuehren (nur wenn Pfad existiert)

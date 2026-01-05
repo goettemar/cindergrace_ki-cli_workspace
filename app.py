@@ -12,6 +12,12 @@ import gradio as gr
 from core.codacy_sync import CodacySync
 from core.database import DatabaseManager, Project
 from core.github_api import GitHubAPI, get_gh_cli_status, run_gh_command
+from core.project_tools import (
+    create_backup,
+    create_test_clone,
+    run_final_workflow,
+    run_ruff_fix,
+)
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -972,6 +978,50 @@ class KIWorkspaceApp:
                                 )
                                 add_project_status = gr.Markdown()
 
+                            # Pfad-Einstellungen für Projekt-Tools
+                            with gr.Accordion("📂 Pfad-Einstellungen", open=False):
+                                gr.Markdown("Pfade für Backup und Test-Clone Funktionen.")
+
+                                backup_path_setting = gr.Textbox(
+                                    label="Backup-Basis-Pfad",
+                                    value=self.db.get_setting("backup_base_path")
+                                    or "~/projekte_backup",
+                                    placeholder="~/projekte_backup",
+                                )
+                                test_clone_path_setting = gr.Textbox(
+                                    label="Test-Clone-Basis-Pfad",
+                                    value=self.db.get_setting("test_clone_base_path")
+                                    or "~/projekte_test",
+                                    placeholder="~/projekte_test",
+                                )
+
+                                with gr.Row():
+                                    save_paths_btn = gr.Button(
+                                        "💾 Pfade speichern", variant="primary"
+                                    )
+                                    paths_status = gr.Markdown()
+
+                                def save_tool_paths(backup_path: str, clone_path: str) -> str:
+                                    """Speichert die Pfad-Einstellungen."""
+                                    msgs = []
+                                    if backup_path.strip():
+                                        self.db.set_setting("backup_base_path", backup_path.strip())
+                                        msgs.append("Backup-Pfad")
+                                    if clone_path.strip():
+                                        self.db.set_setting(
+                                            "test_clone_base_path", clone_path.strip()
+                                        )
+                                        msgs.append("Test-Clone-Pfad")
+                                    if msgs:
+                                        return f"✅ Gespeichert: {', '.join(msgs)}"
+                                    return "⚠️ Nichts zu speichern"
+
+                                save_paths_btn.click(
+                                    fn=save_tool_paths,
+                                    inputs=[backup_path_setting, test_clone_path_setting],
+                                    outputs=[paths_status],
+                                )
+
                         # --- Check-Matrix ---
                         with gr.Tab("📊 Check-Matrix"):
                             gr.Markdown("### Phasen & Release Checks")
@@ -1089,6 +1139,166 @@ class KIWorkspaceApp:
                                 [GitHub](https://github.com/goettemar/cindergrace_ki-cli_workspace)
                                 """
                             )
+
+                # === Projekt-Tools Tab ===
+                with gr.Tab("🛠️ Projekt-Tools"):
+                    gr.Markdown("### Projekt-Werkzeuge")
+                    gr.Markdown("Backup, Test-Clone und Code-Formatierung für deine Projekte.")
+
+                    # Projekt-Auswahl
+                    with gr.Row():
+                        tools_project_dropdown = gr.Dropdown(
+                            label="Projekt auswählen",
+                            choices=self.get_project_choices(),
+                            value=None,
+                            scale=3,
+                        )
+                        tools_refresh_btn = gr.Button("🔄", scale=1)
+
+                    # --- Backup ---
+                    with gr.Accordion("📦 Backup erstellen", open=False):
+                        gr.Textbox(
+                            label="Backup-Pfad",
+                            value=self.db.get_setting("backup_base_path") or "~/projekte_backup",
+                            interactive=False,
+                        )
+                        backup_btn = gr.Button("📦 Backup erstellen", variant="primary")
+                        backup_status = gr.Markdown()
+
+                    # --- Test-Clone ---
+                    with gr.Accordion("🧪 Test-Clone erstellen", open=False):
+                        gr.Textbox(
+                            label="Test-Clone-Pfad",
+                            value=self.db.get_setting("test_clone_base_path") or "~/projekte_test",
+                            interactive=False,
+                        )
+                        clone_btn = gr.Button("🧪 Test-Clone erstellen", variant="primary")
+                        clone_status = gr.Markdown()
+
+                    # --- Ruff Fix ---
+                    with gr.Accordion("🔧 Ruff Fix + Format", open=False):
+                        gr.Markdown(
+                            "Führt `ruff check --fix` und `ruff format` aus. "
+                            "Korrigiert Stil- und Formatierungsprobleme automatisch."
+                        )
+                        ruff_btn = gr.Button("🔧 Ruff Fix + Format", variant="primary")
+                        ruff_status = gr.Markdown()
+
+                    # --- Final Workflow ---
+                    with gr.Accordion("🚀 Final Workflow", open=True):
+                        gr.Markdown(
+                            """
+                            **Kompletter Release-Workflow:**
+                            1. 📦 Backup erstellen
+                            2. 🔧 Ruff fix + format
+                            3. 📝 Git commit (wenn Änderungen)
+                            4. ✅ Release Check ausführen
+                            5. 🚀 Git push (wenn alle Checks OK)
+                            """
+                        )
+                        workflow_btn = gr.Button("🚀 Final Workflow starten", variant="primary")
+                        workflow_log = gr.Markdown()
+
+                    # Event Handlers für Projekt-Tools
+
+                    def refresh_tools_projects():
+                        return gr.update(choices=self.get_project_choices())
+
+                    tools_refresh_btn.click(
+                        fn=refresh_tools_projects,
+                        outputs=[tools_project_dropdown],
+                    )
+
+                    def do_backup(project_id: int | None) -> str:
+                        if not project_id:
+                            return "❌ Kein Projekt ausgewählt"
+                        project = self.db.get_project_by_id(project_id)
+                        if not project:
+                            return "❌ Projekt nicht gefunden"
+                        backup_base = self.db.get_setting("backup_base_path") or "~/projekte_backup"
+                        backup_base = os.path.expanduser(backup_base)
+                        success, result = create_backup(project, backup_base)
+                        if success:
+                            return f"✅ Backup erstellt: `{result}`"
+                        return f"❌ Fehler: {result}"
+
+                    backup_btn.click(
+                        fn=do_backup,
+                        inputs=[tools_project_dropdown],
+                        outputs=[backup_status],
+                    )
+
+                    def do_clone(project_id: int | None) -> str:
+                        if not project_id:
+                            return "❌ Kein Projekt ausgewählt"
+                        project = self.db.get_project_by_id(project_id)
+                        if not project:
+                            return "❌ Projekt nicht gefunden"
+                        clone_base = (
+                            self.db.get_setting("test_clone_base_path") or "~/projekte_test"
+                        )
+                        clone_base = os.path.expanduser(clone_base)
+                        success, result = create_test_clone(project, clone_base)
+                        if success:
+                            return f"✅ Test-Clone erstellt: `{result}`"
+                        return f"❌ Fehler: {result}"
+
+                    clone_btn.click(
+                        fn=do_clone,
+                        inputs=[tools_project_dropdown],
+                        outputs=[clone_status],
+                    )
+
+                    def do_ruff_fix(project_id: int | None) -> str:
+                        if not project_id:
+                            return "❌ Kein Projekt ausgewählt"
+                        project = self.db.get_project_by_id(project_id)
+                        if not project or not project.path:
+                            return "❌ Projekt-Pfad nicht gefunden"
+                        success, output, files_changed = run_ruff_fix(project.path)
+                        if success:
+                            if files_changed > 0:
+                                return f"✅ Ruff Fix abgeschlossen. {files_changed} Dateien geändert.\n\n```\n{output[:1000]}\n```"
+                            return "✅ Ruff Fix abgeschlossen. Keine Änderungen nötig."
+                        return f"❌ Fehler:\n```\n{output[:1000]}\n```"
+
+                    ruff_btn.click(
+                        fn=do_ruff_fix,
+                        inputs=[tools_project_dropdown],
+                        outputs=[ruff_status],
+                    )
+
+                    def do_final_workflow(project_id: int | None) -> str:
+                        if not project_id:
+                            return "❌ Kein Projekt ausgewählt"
+                        project = self.db.get_project_by_id(project_id)
+                        if not project:
+                            return "❌ Projekt nicht gefunden"
+                        backup_base = self.db.get_setting("backup_base_path") or "~/projekte_backup"
+                        backup_base = os.path.expanduser(backup_base)
+                        results = run_final_workflow(project, self.db, backup_base)
+
+                        # Format results
+                        lines = []
+                        all_ok = True
+                        for step, success, msg in results:
+                            emoji = "✅" if success else "❌"
+                            lines.append(f"{emoji} **{step}**: {msg}")
+                            if not success:
+                                all_ok = False
+
+                        summary = (
+                            "🎉 **Workflow erfolgreich!**"
+                            if all_ok
+                            else "⚠️ **Workflow mit Problemen beendet**"
+                        )
+                        return f"{summary}\n\n" + "\n\n".join(lines)
+
+                    workflow_btn.click(
+                        fn=do_final_workflow,
+                        inputs=[tools_project_dropdown],
+                        outputs=[workflow_log],
+                    )
 
             # === Event Handlers ===
 
