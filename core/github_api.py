@@ -148,19 +148,26 @@ class GitHubAPI:
 
     @property
     def token(self) -> str | None:
-        """Lädt den GitHub Token (lazy, mit Caching)."""
+        """Lädt den GitHub Token (lazy, mit Caching).
+
+        Priorität:
+        1. OS Keyring (via SecretStore)
+        2. Migriert aus DB (wenn noch verschlüsselt gespeichert)
+        3. gh CLI Token (falls installiert)
+        """
         if self._token:
             return self._token
 
         if not self._token_loaded:
             self._token_loaded = True
 
-            # 1. Aus Datenbank
-            if self._db:
-                db_token = self._db.get_setting("github_token")
-                if db_token:
-                    self._token = db_token
-                    return self._token
+            # 1. Aus SecretStore (Keyring + Migration + Env Fallback)
+            from core.secrets import get_api_key
+
+            token = get_api_key("github")
+            if token:
+                self._token = token
+                return self._token
 
             # 2. Von gh CLI (falls installiert)
             cli_token = get_gh_cli_token()
@@ -174,16 +181,13 @@ class GitHubAPI:
         return self._token
 
     def set_token(self, token: str) -> None:
-        """Setzt den GitHub Token (und speichert in DB)."""
+        """Setzt den GitHub Token (in OS Keyring)."""
         self._token = token
         self._token_loaded = True
-        if self._db and token:
-            self._db.set_setting(
-                "github_token",
-                token,
-                encrypt=True,
-                description="GitHub Personal Access Token",
-            )
+        if token:
+            from core.secrets import set_api_key
+
+            set_api_key("github", token)
 
     def _headers(self) -> dict[str, str]:
         """Gibt die API-Header zurück."""

@@ -600,11 +600,12 @@ def commit(
         create_commit,
         get_staged_diff,
     )
+    from core.secrets import get_api_key
 
     db = get_db()
 
-    # API Key holen
-    api_key = db.get_setting("openrouter_api_key", decrypt=True)
+    # API Key holen (aus OS Keyring oder migriert aus DB)
+    api_key = get_api_key("openrouter")
     if not api_key:
         console.print("❌ [bold red]OpenRouter API Key nicht konfiguriert![/bold red]")
         console.print("\nSetze den Key via:")
@@ -712,22 +713,28 @@ def set_key(
       ki-workspace set-key codacy xxx
       ki-workspace set-key github ghp_xxx
     """
-    db = get_db()
+    from core.secrets import set_api_key
 
-    key_mapping = {
-        "codacy": ("codacy_api_token", "Codacy API Token"),
-        "github": ("github_token", "GitHub Token"),
-        "openrouter": ("openrouter_api_key", "OpenRouter API Key"),
+    valid_types = {"codacy", "github", "openrouter"}
+    descriptions = {
+        "codacy": "Codacy API Token",
+        "github": "GitHub Token",
+        "openrouter": "OpenRouter API Key",
     }
 
-    if key_type.lower() not in key_mapping:
+    if key_type.lower() not in valid_types:
         console.print(f"❌ Unbekannter Key-Typ: {key_type}", style="red")
-        console.print(f"Verfuegbar: {', '.join(key_mapping.keys())}")
+        console.print(f"Verfuegbar: {', '.join(valid_types)}")
         sys.exit(1)
 
-    setting_key, description = key_mapping[key_type.lower()]
-    db.set_setting(setting_key, value, encrypt=True, description=description)
-    console.print(f"✅ [bold green]{description} gespeichert (verschluesselt)[/bold green]")
+    stored_in_keyring = set_api_key(key_type.lower(), value)  # type: ignore
+    description = descriptions[key_type.lower()]
+
+    if stored_in_keyring:
+        console.print(f"✅ [bold green]{description} im OS Keyring gespeichert[/bold green]")
+    else:
+        console.print(f"⚠️ [bold yellow]{description} als Env-Variable gesetzt[/bold yellow]")
+        console.print("   (Keyring nicht verfuegbar - nur fuer aktuelle Session)")
 
 
 # === KI-Kollegen Befehle ===

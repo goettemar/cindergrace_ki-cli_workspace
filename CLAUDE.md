@@ -15,7 +15,8 @@ cindergrace_ki-cli_workspace/
 │   ├── codacy_sync.py  # Codacy REST API Sync
 │   ├── checks.py       # Release Readiness Checks
 │   ├── project_init.py # Projekt-Erstellung/Archivierung
-│   └── crypto.py       # Verschlüsselung für API Keys
+│   ├── crypto.py       # Verschlüsselung (Legacy)
+│   └── secrets.py      # API Key Storage (OS Keyring)
 └── tests/
 ```
 
@@ -119,11 +120,35 @@ SQLite unter `~/.ai-workspace/workspace.db`
 - `ki_reviewed_by` - Welche KI (claude, codex, gemini)
 - `ki_reviewed_at` - Timestamp
 
-## API Keys
+## API Keys (seit v0.3.0)
 
-Verschlüsselt in DB gespeichert (Fernet/AES-128):
-- `codacy_api_token` - Für Issue-Sync
-- `github_token` - Für GitHub API
+**Speicherung via OS Keyring** (Windows Credential Manager, macOS Keychain, Linux Secret Service):
+
+```python
+from core.secrets import get_api_key, set_api_key
+
+# Keys lesen
+token = get_api_key("codacy")    # codacy_api_token
+token = get_api_key("github")    # github_token
+token = get_api_key("openrouter") # openrouter_api_key
+
+# Keys setzen (speichert im Keyring)
+set_api_key("codacy", "xxx")
+```
+
+**Fallback-Kette:**
+1. OS Keyring (sicher, persistent)
+2. Migration aus DB (alte verschlüsselte Werte werden automatisch migriert)
+3. Environment Variables (Warnung wird ausgegeben)
+
+**CLI:**
+```bash
+ki-workspace set-key codacy <TOKEN>
+ki-workspace set-key github <TOKEN>
+ki-workspace set-key openrouter <KEY>
+```
+
+**Legacy:** `crypto.py` wird nur noch für Rückwärtskompatibilität genutzt.
 
 ## Release Readiness Checks
 
@@ -143,4 +168,5 @@ Prüft automatisch:
 - Gradio 5.x (Web-UI)
 - Typer (CLI)
 - SQLite mit FTS5
-- Fernet (Verschlüsselung)
+- OS Keyring (API Keys via `cindergrace_common.SecretStore`)
+- Fernet (Legacy-Verschlüsselung)

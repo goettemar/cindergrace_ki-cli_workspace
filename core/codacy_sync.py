@@ -7,7 +7,6 @@ Direkte Integration mit der Codacy REST API für autonomen Sync.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -39,23 +38,25 @@ class CodacySync:
 
     @property
     def api_token(self) -> str | None:
-        """Lädt den API-Token (lazy, mit Caching)."""
+        """Lädt den API-Token (lazy, mit Caching).
+
+        Priorität:
+        1. OS Keyring (via SecretStore)
+        2. Migriert aus DB (wenn noch verschlüsselt gespeichert)
+        3. Environment Variable (Fallback)
+        """
         if self._api_token:
             return self._api_token
 
         if not self._token_loaded:
             self._token_loaded = True
-            # 1. Aus Datenbank (verschlüsselt)
-            if self._db:
-                db_token = self._db.get_setting("codacy_api_token")
-                if db_token:
-                    self._api_token = db_token
-                    return self._api_token
 
-            # 2. Aus Umgebungsvariable
-            env_token = os.environ.get("CODACY_API_TOKEN")
-            if env_token:
-                self._api_token = env_token
+            # Aus SecretStore (Keyring + Migration + Env Fallback)
+            from core.secrets import get_api_key
+
+            token = get_api_key("codacy")
+            if token:
+                self._api_token = token
                 return self._api_token
 
             logger.warning("Kein CODACY_API_TOKEN gesetzt")
@@ -63,16 +64,13 @@ class CodacySync:
         return self._api_token
 
     def set_api_token(self, token: str) -> None:
-        """Setzt den API-Token (und speichert in DB wenn verfügbar)."""
+        """Setzt den API-Token (in OS Keyring)."""
         self._api_token = token
         self._token_loaded = True
-        if self._db and token:
-            self._db.set_setting(
-                "codacy_api_token",
-                token,
-                encrypt=True,
-                description="Codacy API Token für Issue-Sync",
-            )
+        if token:
+            from core.secrets import set_api_key
+
+            set_api_key("codacy", token)
 
     def _headers(self) -> dict[str, str]:
         """Gibt die API-Header zurück."""

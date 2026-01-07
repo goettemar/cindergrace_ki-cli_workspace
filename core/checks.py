@@ -1247,3 +1247,65 @@ def get_phase_info(db: DatabaseManager, phase_id: int | None) -> dict[str, str] 
     if phase:
         return {"name": phase.name, "display_name": phase.display_name}
     return None
+
+
+# === Modular Check System Integration ===
+
+
+def get_available_checks() -> list[dict]:
+    """
+    Get info about all available modular checks.
+
+    Returns:
+        List of dicts with name, description, category, default_phases
+    """
+    from core.check_plugins import get_all_checks
+
+    return get_all_checks()
+
+
+def run_modular_checks(
+    db: DatabaseManager,
+    project: Project,
+    phase_override: int | None = None,
+) -> list[CheckResult]:
+    """
+    Run checks using the new modular check system.
+
+    Checks are auto-discovered from core/check_plugins/builtin/ and custom/.
+    Phase configuration is read from the check_matrix table.
+
+    Args:
+        db: DatabaseManager instance
+        project: Project to check
+        phase_override: Override project phase
+
+    Returns:
+        List of CheckResults
+    """
+    from core.check_plugins import get_all_checks, run_checks
+
+    # Sync check matrix with available checks (adds new checks)
+    available = get_all_checks()
+    db.sync_check_matrix_with_registry(available)
+
+    # Run using modular system
+    return run_checks(db, project, phase_id=phase_override)
+
+
+def sync_checks_to_db(db: DatabaseManager) -> int:
+    """
+    Sync available modular checks to the database check_matrix.
+
+    Adds new checks from registry to all phases with their default_phases.
+
+    Args:
+        db: DatabaseManager instance
+
+    Returns:
+        Number of new checks added
+    """
+    from core.check_plugins import get_all_checks
+
+    available = get_all_checks()
+    return db.sync_check_matrix_with_registry(available)

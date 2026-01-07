@@ -371,6 +371,7 @@ class KIWorkspaceApp:
                             "CI",
                             "Git",
                             "Release",
+                            "PyPI",
                             "Codacy",
                         ],
                         datatype=[
@@ -382,6 +383,7 @@ class KIWorkspaceApp:
                             "number",
                             "number",
                             "number",
+                            "str",
                             "str",
                             "str",
                             "str",
@@ -415,37 +417,15 @@ class KIWorkspaceApp:
                                 )
 
                         # Zwei-Spalten Layout
-                        with gr.Row():
+                        with gr.Row(equal_height=True):
                             # Linke Spalte: Projekt-Infos
-                            with gr.Column(scale=1):
-                                with gr.Row():
-                                    gr.Markdown("**📁 Pfad**", scale=1)
-                                    dash_info_path = gr.Markdown("*-*", scale=2)
-                                with gr.Row():
-                                    gr.Markdown("**🔗 GitHub**", scale=1)
-                                    dash_info_github = gr.Markdown("*-*", scale=2)
-                                with gr.Row():
-                                    gr.Markdown("**📊 Codacy**", scale=1)
-                                    dash_info_codacy = gr.Markdown("*-*", scale=2)
-                                with gr.Row():
-                                    gr.Markdown("**✓ Release**", scale=1)
-                                    dash_release_info = gr.Markdown("*-*", scale=2)
-                                with gr.Row():
-                                    gr.Markdown("**🔴 Critical**", scale=1)
-                                    dash_critical_count = gr.Markdown("0", scale=2)
-                                with gr.Row():
-                                    gr.Markdown("**🟠 High**", scale=1)
-                                    dash_high_count = gr.Markdown("0", scale=2)
-                                with gr.Row():
-                                    gr.Markdown("**📊 Coverage**", scale=1)
-                                    dash_coverage = gr.Markdown("*-*", scale=2)
+                            with gr.Column(scale=1, min_width=300):
+                                dash_info_table = gr.Markdown("*Projekt auswählen...*")
 
                             # Rechte Spalte: GitHub About + Topics
-                            with gr.Column(scale=1):
-                                gr.Markdown("**📝 About**")
-                                dash_github_about = gr.Markdown("*-*")
-                                gr.Markdown("**🏷️ Topics**")
-                                dash_github_topics = gr.Markdown("*-*")
+                            with gr.Column(scale=1, min_width=300):
+                                dash_github_about = gr.Markdown("**📝 About:** *-*")
+                                dash_github_topics = gr.Markdown("**🏷️ Topics:** *-*")
 
                         dash_detail_msg = gr.Markdown("")
 
@@ -638,16 +618,20 @@ class KIWorkspaceApp:
                                 show_label=False,
                             )
 
-                        # Rechts: Notifications
+                        # Rechts: Notifications + Repo Info
                         with gr.Column(scale=1):
                             gr.Markdown("#### 🔔 Notifications")
                             gh_notifications_box = gr.Textbox(
                                 value="",
-                                lines=10,
-                                max_lines=20,
+                                lines=4,
+                                max_lines=8,
                                 interactive=False,
                                 show_label=False,
                             )
+                            gr.Markdown("#### 📝 About")
+                            gh_repo_about = gr.Markdown("*-*")
+                            gr.Markdown("#### 🏷️ Topics")
+                            gh_repo_topics = gr.Markdown("*-*")
 
                     gr.Markdown("---")
                     gr.Markdown("#### ⚡ GitHub Actions (letzte 5)")
@@ -2057,6 +2041,9 @@ class KIWorkspaceApp:
                     # Codacy Sync-Zeit formatieren
                     codacy_str = str(p.last_sync)[:16].replace("T", " ") if p.last_sync else "nie"
 
+                    # PyPI Status formatieren (nur Version, ohne Index-Check)
+                    pypi_str = p.pypi_version if p.pypi_package and p.pypi_version else "-"
+
                     rows.append(
                         [
                             p.id,
@@ -2070,6 +2057,7 @@ class KIWorkspaceApp:
                             ci_status,
                             git_status,
                             release_str,
+                            pypi_str,
                             codacy_str,
                         ]
                     )
@@ -2077,17 +2065,22 @@ class KIWorkspaceApp:
                 return rows
 
             def refresh_all_projects():
-                """Aktualisiert alle Projekte: Codacy-Sync + Release-Checks (parallel)."""
+                """Aktualisiert alle Projekte: Codacy-Sync + Release-Checks + PyPI (parallel)."""
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                from core.checks import run_all_checks
+                from core.checks import get_pypi_info_from_dist, run_all_checks
 
                 projects = self.db.get_all_projects(include_archived=False)
-                sync_results = {"synced": 0, "checked": 0, "errors": []}
+                sync_results = {"synced": 0, "checked": 0, "pypi": 0, "errors": []}
 
                 def refresh_single_project(project):
-                    """Sync + Check für ein einzelnes Projekt."""
-                    result = {"name": project.name, "synced": False, "checked": False}
+                    """Sync + Check + PyPI für ein einzelnes Projekt."""
+                    result = {
+                        "name": project.name,
+                        "synced": False,
+                        "checked": False,
+                        "pypi": False,
+                    }
 
                     # 1. Codacy-Sync (wenn konfiguriert)
                     if project.codacy_provider and project.codacy_org and self.codacy.api_token:
@@ -2109,6 +2102,24 @@ class KIWorkspaceApp:
                         except Exception as e:
                             logger.warning(f"Check-Fehler {project.name}: {e}")
 
+                    # 3. PyPI-Status (aus /dist lesen, ohne Index-Check)
+                    if project.path:
+                        try:
+                            pypi_info = get_pypi_info_from_dist(project.path)
+                            package = pypi_info.get("package")
+                            version = pypi_info.get("version")
+
+                            if package and version:
+                                # Nur Paket und Version speichern (kein Index-Check)
+                                self.db.update_pypi_cache(project.id, package, version, False, None)
+                                result["pypi"] = True
+                            elif project.pypi_package:
+                                # Kein dist mehr vorhanden - Cache leeren
+                                self.db.update_pypi_cache(project.id, None, None, False, None)
+                                result["pypi"] = True
+                        except Exception as e:
+                            logger.warning(f"PyPI-Check-Fehler {project.name}: {e}")
+
                     return result
 
                 # Alle Projekte parallel aktualisieren
@@ -2121,10 +2132,14 @@ class KIWorkspaceApp:
                                 sync_results["synced"] += 1
                             if res["checked"]:
                                 sync_results["checked"] += 1
+                            if res["pypi"]:
+                                sync_results["pypi"] += 1
                         except Exception as e:
                             sync_results["errors"].append(str(e))
 
                 msg = f"✅ {sync_results['synced']} synced, {sync_results['checked']} checked"
+                if sync_results["pypi"] > 0:
+                    msg += f", {sync_results['pypi']} PyPI"
                 if sync_results["errors"]:
                     msg += f" ({len(sync_results['errors'])} Fehler)"
                 # Mit live CI/Git Status laden
@@ -2272,38 +2287,20 @@ class KIWorkspaceApp:
 
             def load_project_details(project_id):
                 """Lädt Detail-Informationen für ein Projekt."""
+                empty_result = (
+                    gr.update(visible=False),
+                    "",
+                    "*Projekt auswählen...*",
+                    "**📝 About:** *-*",
+                    "**🏷️ Topics:** *-*",
+                    "",
+                )
                 if not project_id:
-                    return (
-                        gr.update(visible=False),
-                        "",
-                        "*-*",
-                        "*-*",
-                        "*-*",
-                        "*-*",
-                        "0",
-                        "0",
-                        "*-*",
-                        "*-*",
-                        "*-*",
-                        "",
-                    )
+                    return empty_result
 
                 project = self.db.get_project(project_id)
                 if not project:
-                    return (
-                        gr.update(visible=False),
-                        "",
-                        "*-*",
-                        "*-*",
-                        "*-*",
-                        "*-*",
-                        "0",
-                        "0",
-                        "*-*",
-                        "*-*",
-                        "*-*",
-                        "",
-                    )
+                    return empty_result
 
                 # Phase
                 phase_name = "-"
@@ -2312,18 +2309,20 @@ class KIWorkspaceApp:
                     if phase:
                         phase_name = phase.display_name
 
-                # Info-Werte separat
-                path_info = (
-                    f"`{project.path.replace('/home/zorinadmin/projekte/', '~/')}`"
+                # Info-Werte für Tabelle
+                path_short = (
+                    project.path.replace("/home/zorinadmin/projekte/", "~/")
                     if project.path
-                    else "*-*"
+                    else "-"
                 )
-                github_info = (
-                    f"`{project.git_remote.replace('https://github.com/', '').replace('.git', '')}`"
+                github_short = (
+                    project.git_remote.replace("https://github.com/", "")
+                    .replace("git@github.com:", "")
+                    .replace(".git", "")
                     if project.git_remote
-                    else "*-*"
+                    else "-"
                 )
-                codacy_info = f"`{project.codacy_provider or '-'}/{project.codacy_org or '-'}`"
+                codacy_short = f"{project.codacy_provider or '-'}/{project.codacy_org or '-'}"
 
                 # Critical/High Issues: Nur Anzahl
                 critical_count = len(
@@ -2334,7 +2333,7 @@ class KIWorkspaceApp:
                         is_false_positive=False,
                     )
                 )
-                critical_str = "✅ 0" if critical_count == 0 else f"🔴 **{critical_count}**"
+                critical_str = "✅ 0" if critical_count == 0 else f"🔴 {critical_count}"
 
                 high_count = len(
                     self.db.get_issues(
@@ -2344,24 +2343,53 @@ class KIWorkspaceApp:
                         is_false_positive=False,
                     )
                 )
-                high_str = "✅ 0" if high_count == 0 else f"🟠 **{high_count}**"
+                high_str = "✅ 0" if high_count == 0 else f"🟠 {high_count}"
 
                 # Release Check Info (nur Zähler)
                 if project.cache_release_total > 0:
                     passed = project.cache_release_passed
                     total = project.cache_release_total
                     status_icon = "✅" if project.cache_release_ready else "⚠️"
-                    release_info = f"{status_icon} **{passed}/{total}**"
+                    release_info = f"{status_icon} {passed}/{total}"
                 else:
-                    release_info = "❓ *Nicht geprüft*"
+                    release_info = "❓ -"
 
-                # Coverage: Nur beim Release-Check (kein pytest bei jedem Klick)
-                coverage_info = "*Release-Check ausführen*"
+                # Info-Block formatieren (Markdown) - mit Zeilenumbrüchen
+                pypi_line = ""
+                if project.pypi_package:
+                    google_url = (
+                        f"https://www.google.com/search?q=site:pypi.org+{project.pypi_package}"
+                    )
+                    pypi_line = (
+                        f"\n\n**📦 PyPI:** [{project.pypi_package}]({google_url}) (Google Index)"
+                    )
 
-                # GitHub About + Topics
-                github_about = "*-*"
-                github_topics = "*-*"
-                if project.github_owner and project.name:
+                info_table = f"""**📂 Pfad:** `{path_short}`
+
+**🐙 GitHub:** `{github_short}`
+
+**🔍 Codacy:** `{codacy_short}`{pypi_line}
+
+**🔴 Critical:** {critical_str}
+
+**🟠 High:** {high_str}
+
+**✓ Release:** {release_info}"""
+
+                # GitHub About + Topics laden
+                about_text = "*-*"
+                topics_text = "*-*"
+
+                # Owner aus git_remote extrahieren
+                owner = project.github_owner
+                if not owner and project.git_remote:
+                    import re
+
+                    match = re.search(r"github\.com[:/]([^/]+)/", project.git_remote)
+                    if match:
+                        owner = match.group(1)
+
+                if owner:
                     try:
                         import json
                         import subprocess
@@ -2371,7 +2399,7 @@ class KIWorkspaceApp:
                                 "gh",
                                 "repo",
                                 "view",
-                                f"{project.github_owner}/{project.name}",
+                                f"{owner}/{project.name}",
                                 "--json",
                                 "description,repositoryTopics",
                             ],
@@ -2382,24 +2410,22 @@ class KIWorkspaceApp:
                         if result.returncode == 0:
                             data = json.loads(result.stdout)
                             if data.get("description"):
-                                github_about = data["description"]
-                            topics = data.get("repositoryTopics", [])
-                            if topics:
-                                topic_names = [t["name"] for t in topics]
-                                github_topics = " ".join(f"`{t}`" for t in topic_names)
-                    except Exception:
-                        pass
+                                about_text = data["description"]
+                            topic_list = data.get("repositoryTopics", [])
+                            if topic_list:
+                                topic_names = [t["name"] for t in topic_list]
+                                topics_text = " ".join(f"`{t}`" for t in topic_names)
+                    except Exception as e:
+                        logger.warning(f"GitHub info error: {e}")
+
+                # Mit Labels formatieren
+                github_about = f"**📝 About:** {about_text}"
+                github_topics = f"**🏷️ Topics:** {topics_text}"
 
                 return (
                     gr.update(visible=True),
                     f"### 📁 {project.name} ({phase_name})",
-                    path_info,
-                    github_info,
-                    codacy_info,
-                    release_info,
-                    critical_str,
-                    high_str,
-                    coverage_info,
+                    info_table,
                     github_about,
                     github_topics,
                     "",
@@ -2407,6 +2433,15 @@ class KIWorkspaceApp:
 
             def on_dashboard_select(evt: gr.SelectData, data):
                 """Handler für Klick auf Dashboard-Tabelle."""
+                empty_result = (
+                    None,
+                    gr.update(visible=False),
+                    "",
+                    "*Projekt auswählen...*",
+                    "**📝 About:** *-*",
+                    "**🏷️ Topics:** *-*",
+                    "",
+                )
                 try:
                     if evt.index is not None:
                         row_idx = evt.index[0] if isinstance(evt.index, list | tuple) else evt.index
@@ -2419,21 +2454,7 @@ class KIWorkspaceApp:
                             return project_id, *load_project_details(project_id)
                 except Exception as e:
                     logger.error(f"Dashboard select error: {e}")
-                return (
-                    None,
-                    gr.update(visible=False),
-                    "",
-                    "*-*",
-                    "*-*",
-                    "*-*",
-                    "*-*",
-                    "0",
-                    "0",
-                    "*-*",
-                    "*-*",
-                    "*-*",
-                    "",
-                )
+                return empty_result
 
             def dash_sync_project(project_id):
                 """Sync für ausgewähltes Projekt."""
@@ -2445,11 +2466,11 @@ class KIWorkspaceApp:
             def dash_check_project(project_id):
                 """Release Check für ausgewähltes Projekt."""
                 if not project_id:
-                    return "*Noch nicht geprüft*", "*-*", "⚠️ Kein Projekt ausgewählt"
+                    return "*Projekt auswählen...*", "⚠️ Kein Projekt ausgewählt"
 
                 project = self.db.get_project(project_id)
                 if not project or not project.path:
-                    return "*Projekt hat keinen Pfad*", "*-*", "⚠️ Kein Pfad konfiguriert"
+                    return "*Projekt auswählen...*", "⚠️ Kein Pfad konfiguriert"
 
                 from core.checks import run_all_checks
 
@@ -2460,32 +2481,11 @@ class KIWorkspaceApp:
                 # Cache aktualisieren
                 self.db.update_release_cache(project_id, passed, total, passed == total)
 
-                # Coverage aus Ergebnissen extrahieren
-                coverage_info = "*-*"
-                for r in results:
-                    if r.name == "Coverage":
-                        # Farbkodierung basierend auf severity
-                        if "%" in r.message:
-                            import re
+                # Tabelle neu laden mit aktuellen Werten
+                details = load_project_details(project_id)
+                # details[2] ist die info_table
 
-                            match = re.search(r"(\d+)%", r.message)
-                            if match:
-                                pct = int(match.group(1))
-                                if pct >= 80:
-                                    coverage_info = f"🟢 **{pct}%**"
-                                elif pct >= 60:
-                                    coverage_info = f"🟡 **{pct}%**"
-                                else:
-                                    coverage_info = f"🔴 **{pct}%**"
-                        else:
-                            coverage_info = r.message
-                        break
-
-                # Ergebnis formatieren (nur Zähler)
-                status_icon = "✅" if passed == total else "⚠️"
-                release_info = f"{status_icon} **{passed}/{total}**"
-
-                return release_info, coverage_info, f"✅ Check abgeschlossen ({passed}/{total})"
+                return details[2], f"✅ Check abgeschlossen ({passed}/{total})"
 
             # Dashboard Table Select Handler
             dashboard_table.select(
@@ -2495,13 +2495,7 @@ class KIWorkspaceApp:
                     dash_selected_id,
                     dash_detail_group,
                     dash_detail_header,
-                    dash_info_path,
-                    dash_info_github,
-                    dash_info_codacy,
-                    dash_release_info,
-                    dash_critical_count,
-                    dash_high_count,
-                    dash_coverage,
+                    dash_info_table,
                     dash_github_about,
                     dash_github_topics,
                     dash_detail_msg,
@@ -2514,9 +2508,9 @@ class KIWorkspaceApp:
                 inputs=[dash_selected_id],
                 outputs=[dash_detail_msg],
             ).then(
-                fn=lambda pid: load_project_details(pid)[5:8] if pid else ("", "", ""),
+                fn=lambda pid: load_project_details(pid)[2] if pid else "*-*",
                 inputs=[dash_selected_id],
-                outputs=[dash_release_info, dash_critical_count, dash_high_count],
+                outputs=[dash_info_table],
             ).then(
                 fn=load_dashboard_data,
                 outputs=[dashboard_table],
@@ -2525,7 +2519,7 @@ class KIWorkspaceApp:
             dash_check_btn.click(
                 fn=dash_check_project,
                 inputs=[dash_selected_id],
-                outputs=[dash_release_info, dash_coverage, dash_detail_msg],
+                outputs=[dash_info_table, dash_detail_msg],
             ).then(
                 fn=load_dashboard_data,
                 outputs=[dashboard_table],
@@ -2893,6 +2887,60 @@ class KIWorkspaceApp:
                 except (json.JSONDecodeError, KeyError) as e:
                     return [], f"❌ JSON-Fehler: {e}"
 
+            def get_repo_info(project_id):
+                """Lädt About und Topics für ein Repository."""
+                if not project_id:
+                    return "*-*", "*-*"
+
+                project = self.db.get_project(project_id)
+                if not project:
+                    return "*-*", "*-*"
+
+                # Owner aus github_owner oder git_remote extrahieren
+                owner = project.github_owner
+                if not owner and project.git_remote:
+                    import re
+
+                    # git@github.com:owner/repo.git oder https://github.com/owner/repo.git
+                    match = re.search(r"github\.com[:/]([^/]+)/", project.git_remote)
+                    if match:
+                        owner = match.group(1)
+
+                if not owner:
+                    return "*-*", "*-*"
+
+                about = "*-*"
+                topics = "*-*"
+                try:
+                    import json
+                    import subprocess
+
+                    result = subprocess.run(
+                        [
+                            "gh",
+                            "repo",
+                            "view",
+                            f"{owner}/{project.name}",
+                            "--json",
+                            "description,repositoryTopics",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if result.returncode == 0:
+                        data = json.loads(result.stdout)
+                        if data.get("description"):
+                            about = data["description"]
+                        topic_list = data.get("repositoryTopics", [])
+                        if topic_list:
+                            topic_names = [t["name"] for t in topic_list]
+                            topics = " ".join(f"`{t}`" for t in topic_names)
+                except Exception as e:
+                    logger.warning(f"Repo info error: {e}")
+
+                return about, topics
+
             # Kombinierte Refresh-Funktion für GitHub Tab
             def refresh_all_github_data(project_id):
                 """Aktualisiert alle GitHub-Daten auf einmal."""
@@ -2901,6 +2949,7 @@ class KIWorkspaceApp:
                 git_changes = get_git_changes_list(project_id)
                 notifications = get_gh_notifications()
                 actions_table, actions_debug = get_github_actions(project_id)
+                repo_about, repo_topics = get_repo_info(project_id)
                 return (
                     gh_status,
                     git_status,
@@ -2908,6 +2957,8 @@ class KIWorkspaceApp:
                     notifications,
                     actions_table,
                     actions_debug,
+                    repo_about,
+                    repo_topics,
                 )
 
             def generate_ai_commit_message(project_id: int | None):
@@ -2919,8 +2970,10 @@ class KIWorkspaceApp:
                 if not project or not project.path:
                     return "❌ Kein lokaler Pfad"
 
-                # API Key prüfen
-                api_key = self.db.get_setting("openrouter_api_key", decrypt=True)
+                # API Key prüfen (aus OS Keyring)
+                from core.secrets import get_api_key
+
+                api_key = get_api_key("openrouter")
                 if not api_key:
                     return "❌ OpenRouter Key nicht konfiguriert (Einstellungen > API Keys)"
 
@@ -2962,6 +3015,8 @@ class KIWorkspaceApp:
                     gh_notifications_box,
                     gh_actions_table,
                     gh_actions_debug,
+                    gh_repo_about,
+                    gh_repo_topics,
                 ],
             )
 
@@ -2985,18 +3040,33 @@ class KIWorkspaceApp:
                 outputs=commit_msg_input,
             )
 
-            # Auto-load Git Status, Changes and Actions on project change
+            # Auto-load Git Status, Changes, Actions and Repo Info on project change
             def on_project_change_github(project_id):
                 """Lädt alle GitHub-Daten bei Projektwechsel."""
                 git_status = get_git_status(project_id)
                 git_changes = get_git_changes_list(project_id)
                 actions_table, actions_debug = get_github_actions(project_id)
-                return git_status, git_changes, actions_table, actions_debug
+                repo_about, repo_topics = get_repo_info(project_id)
+                return (
+                    git_status,
+                    git_changes,
+                    actions_table,
+                    actions_debug,
+                    repo_about,
+                    repo_topics,
+                )
 
             project_dropdown.change(
                 fn=on_project_change_github,
                 inputs=[project_dropdown],
-                outputs=[git_status_box, git_changes_box, gh_actions_table, gh_actions_debug],
+                outputs=[
+                    git_status_box,
+                    git_changes_box,
+                    gh_actions_table,
+                    gh_actions_debug,
+                    gh_repo_about,
+                    gh_repo_topics,
+                ],
             )
 
             run_gh_cmd_btn.click(
@@ -3007,10 +3077,12 @@ class KIWorkspaceApp:
 
             # === Settings Event Handlers ===
 
-            # --- Token Status Funktionen ---
+            # --- Token Status Funktionen (verwenden OS Keyring via SecretStore) ---
+            from core.secrets import get_api_key, get_storage_info, set_api_key
+
             def get_github_token_status():
                 """Gibt formatierten GitHub Token-Status zurück."""
-                token = self.db.get_setting("github_token")
+                token = get_api_key("github")
                 if token:
                     masked = token[:4] + "..." + token[-4:] if len(token) > 10 else "***"
                     # Verbindung testen
@@ -3024,57 +3096,58 @@ class KIWorkspaceApp:
 
             def get_codacy_token_status():
                 """Gibt formatierten Codacy Token-Status zurück."""
-                token = self.db.get_setting("codacy_api_token")
+                token = get_api_key("codacy")
+                storage = get_storage_info()
+                backend = "OS Keyring" if storage.get("keyring_functional") else "Environment"
+
                 if token:
                     masked = token[:4] + "..." + token[-4:] if len(token) > 10 else "***"
                     return (
                         f"### ✅ Token konfiguriert\n\n"
                         f"**Gespeicherter Token:** `{masked}`\n\n"
-                        f"*Verschlüsselt in der Datenbank gespeichert.*"
+                        f"*Sicher im {backend} gespeichert.*"
                     )
                 elif os.environ.get("CODACY_API_TOKEN"):
                     return (
                         "### ⚠️ Token aus Umgebungsvariable\n\n"
-                        "*Speichere ihn in der DB für mehr Sicherheit.*"
+                        "*Speichere ihn für mehr Sicherheit (wird im Keyring gespeichert).*"
                     )
                 return "### ❌ Kein Token konfiguriert"
 
-            # --- Token Speichern ---
+            # --- Token Speichern (in OS Keyring) ---
             def save_github_token(token):
                 if not token or not token.strip():
                     return "❌ Bitte Token eingeben", get_github_token_status()
                 self.github.set_token(token.strip())
-                return "✅ GitHub Token gespeichert!", get_github_token_status()
+                return "✅ GitHub Token im Keyring gespeichert!", get_github_token_status()
 
             def save_codacy_token(token):
                 if not token or not token.strip():
                     return "❌ Bitte Token eingeben", get_codacy_token_status()
                 self.codacy.set_api_token(token.strip())
-                return "✅ Codacy Token gespeichert!", get_codacy_token_status()
+                return "✅ Codacy Token im Keyring gespeichert!", get_codacy_token_status()
 
             # --- OpenRouter ---
             def get_openrouter_token_status():
                 """Gibt formatierten OpenRouter Token-Status zurück."""
-                token = self.db.get_setting("openrouter_api_key")
+                token = get_api_key("openrouter")
+                storage = get_storage_info()
+                backend = "OS Keyring" if storage.get("keyring_functional") else "Environment"
+
                 if token:
                     masked = token[:8] + "..." + token[-4:] if len(token) > 14 else "***"
                     return (
                         f"### ✅ Key konfiguriert\n\n"
                         f"**Gespeicherter Key:** `{masked}`\n\n"
-                        f"*Verschlüsselt in der Datenbank gespeichert.*"
+                        f"*Sicher im {backend} gespeichert.*"
                     )
                 return "### ❌ Kein Key konfiguriert"
 
             def save_openrouter_token(token):
                 if not token or not token.strip():
                     return "❌ Bitte Key eingeben", get_openrouter_token_status()
-                self.db.set_setting(
-                    "openrouter_api_key",
-                    token.strip(),
-                    encrypt=True,
-                    description="OpenRouter API Key",
-                )
-                return "✅ OpenRouter Key gespeichert!", get_openrouter_token_status()
+                set_api_key("openrouter", token.strip())
+                return "✅ OpenRouter Key im Keyring gespeichert!", get_openrouter_token_status()
 
             def save_openrouter_model(model):
                 if not model:

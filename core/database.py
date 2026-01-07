@@ -39,6 +39,11 @@ class Project:
     cache_release_total: int = 0
     cache_release_ready: bool = False
     cache_updated_at: datetime | None = None
+    # PyPI Publishing Status (automatisch aus /dist ermittelt)
+    pypi_package: str | None = None  # Paketname z.B. "cindergrace-netman"
+    pypi_version: str | None = None  # Version z.B. "0.1.3"
+    pypi_indexed: bool = False  # Google-Indizierung
+    pypi_indexed_at: datetime | None = None  # Letzte Index-Prüfung
 
 
 @dataclass
@@ -236,6 +241,15 @@ class DatabaseManager:
                 )
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute("ALTER TABLE projects ADD COLUMN cache_updated_at TIMESTAMP")
+            # PyPI Publishing Spalten
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE projects ADD COLUMN pypi_package TEXT")
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE projects ADD COLUMN pypi_version TEXT")
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE projects ADD COLUMN pypi_indexed INTEGER DEFAULT 0")
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE projects ADD COLUMN pypi_indexed_at TIMESTAMP")
 
             # Issues (FTS5 für Volltextsuche)
             # Prüfen ob Tabelle existiert
@@ -845,6 +859,7 @@ class DatabaseManager:
         data["has_codacy"] = bool(data.get("has_codacy", 1))
         data["is_archived"] = bool(data.get("is_archived", 0))
         data["cache_release_ready"] = bool(data.get("cache_release_ready", 0))
+        data["pypi_indexed"] = bool(data.get("pypi_indexed", 0))
         # Cache-Felder mit Defaults
         data.setdefault("cache_issues_critical", 0)
         data.setdefault("cache_issues_high", 0)
@@ -853,6 +868,10 @@ class DatabaseManager:
         data.setdefault("cache_issues_fp", 0)
         data.setdefault("cache_release_passed", 0)
         data.setdefault("cache_release_total", 0)
+        # PyPI-Felder mit Defaults
+        data.setdefault("pypi_package", None)
+        data.setdefault("pypi_version", None)
+        data.setdefault("pypi_indexed_at", None)
         return Project(**data)
 
     def get_project(self, project_id: int) -> Project | None:
@@ -1111,6 +1130,46 @@ class DatabaseManager:
                 WHERE id = ?
                 """,
                 (passed, total, 1 if ready else 0, datetime.now().isoformat(), project_id),
+            )
+            conn.commit()
+
+    def update_pypi_cache(
+        self,
+        project_id: int,
+        package: str | None,
+        version: str | None,
+        indexed: bool,
+        indexed_at: datetime | None = None,
+    ) -> None:
+        """
+        Aktualisiert den PyPI-Status Cache für ein Projekt.
+
+        Args:
+            project_id: Projekt-ID
+            package: PyPI-Paketname (z.B. "cindergrace-netman")
+            version: Version (z.B. "0.1.3")
+            indexed: True wenn bei Google indiziert
+            indexed_at: Zeitpunkt der letzten Index-Prüfung
+        """
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE projects SET
+                    pypi_package = ?,
+                    pypi_version = ?,
+                    pypi_indexed = ?,
+                    pypi_indexed_at = ?,
+                    cache_updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    package,
+                    version,
+                    1 if indexed else 0,
+                    indexed_at.isoformat() if indexed_at else None,
+                    datetime.now().isoformat(),
+                    project_id,
+                ),
             )
             conn.commit()
 
@@ -2081,3 +2140,126 @@ class DatabaseManager:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    # === Modular Check Configuration ===
+
+    def get_check_config(self) -> dict[str, dict]:
+        """
+        Get check configuration for the modular check system.
+
+        Returns config for each check showing which phases it's active in.
+        Format: {check_name: {"phases": [1, 2, 3], "params": {}}}
+
+        Checks not in the matrix use their default_phases from the check class.
+        """
+        with self._get_connection() as conn:
+            # Get all check_matrix entries
+            cursor = conn.execute("""
+                SELECT check_name, phase_id, enabled
+                FROM check_matrix
+                ORDER BY check_name, phase_id
+            """)
+
+            config: dict[str, dict] = {}
+            for row in cursor.fetchall():
+                check_name = row["check_name"]
+                phase_id = row["phase_id"]
+                enabled = bool(row["enabled"])
+
+                if check_name not in config:
+                    config[check_name] = {"phases": [], "params": {}}
+
+                if enabled:
+                    config[check_name]["phases"].append(phase_id)
+
+            return config
+
+    def set_check_phases(self, check_name: str, phase_ids: list[int]) -> None:
+        """
+        Set which phases a check is active in.
+
+        Args:
+            check_name: Name of the check
+            phase_ids: List of phase IDs where check should be active
+        """
+        with self._get_connection() as conn:
+            # Get all phases
+            cursor = conn.execute("SELECT id FROM project_phases")
+            all_phases = [row["id"] for row in cursor.fetchall()]
+
+            # Update each phase
+            for phase_id in all_phases:
+                enabled = phase_id in phase_ids
+                conn.execute(
+                    """
+                    INSERT INTO check_matrix (phase_id, check_name, enabled, severity)
+                    VALUES (?, ?, ?, 'warning')
+                    ON CONFLICT(phase_id, check_name) DO UPDATE SET enabled = ?
+                    """,
+                    (phase_id, check_name, 1 if enabled else 0, 1 if enabled else 0),
+                )
+
+            conn.commit()
+
+    def get_checks_for_phase(self, phase_id: int) -> list[str]:
+        """
+        Get list of check names enabled for a specific phase.
+
+        Args:
+            phase_id: Phase ID
+
+        Returns:
+            List of enabled check names
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT check_name FROM check_matrix WHERE phase_id = ? AND enabled = 1",
+                (phase_id,),
+            )
+            return [row["check_name"] for row in cursor.fetchall()]
+
+    def sync_check_matrix_with_registry(self, available_checks: list[dict]) -> int:
+        """
+        Sync check_matrix with available checks from registry.
+
+        Adds new checks to all phases with their default_phases.
+        Does not remove checks that no longer exist (keeps history).
+
+        Args:
+            available_checks: List of check info dicts from registry
+
+        Returns:
+            Number of new checks added
+        """
+        with self._get_connection() as conn:
+            # Get existing check names
+            cursor = conn.execute("SELECT DISTINCT check_name FROM check_matrix")
+            existing = {row["check_name"] for row in cursor.fetchall()}
+
+            # Get all phases
+            cursor = conn.execute("SELECT id FROM project_phases")
+            all_phases = [row["id"] for row in cursor.fetchall()]
+
+            added = 0
+            for check in available_checks:
+                if check["name"] not in existing:
+                    # New check - add to matrix with default phases
+                    default_phases = check.get("default_phases", all_phases)
+                    for phase_id in all_phases:
+                        enabled = phase_id in default_phases
+                        conn.execute(
+                            """
+                            INSERT INTO check_matrix (phase_id, check_name, enabled, severity, description)
+                            VALUES (?, ?, ?, 'warning', ?)
+                            """,
+                            (
+                                phase_id,
+                                check["name"],
+                                1 if enabled else 0,
+                                check.get("description", ""),
+                            ),
+                        )
+                    added += 1
+
+            conn.commit()
+            return added
